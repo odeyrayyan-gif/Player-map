@@ -222,6 +222,15 @@
     const HLL_WORLD_MIN = -50000;
     const HLL_WORLD_MAX = 50000;
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
+    const HLL_MAP_PLAYABLE_GRID_PRESETS = {
+      // St. Marie Du Mont:
+      // - rows A/B and I/J are unplayable
+      // - cols 1/2 and 9/10 are unplayable
+      // => playable rows C..H and cols 3..8 on a 10x10 grid.
+      smdm: { col_start: 3, col_end: 8, row_start: 3, row_end: 8 },
+      stmariedumont: { col_start: 3, col_end: 8, row_start: 3, row_end: 8 },
+      stmariedumont_day_webp: { col_start: 3, col_end: 8, row_start: 3, row_end: 8 },
+    };
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
       utah_beach: "utah",
@@ -509,6 +518,36 @@
       } catch (_) {
         return null;
       }
+    }
+
+    function getMapPlayableRectPreset(frame) {
+      const preset = getPlayableGridPresetForFrame(frame);
+      return playableRectFromGridPreset(preset);
+    }
+
+    function playableRectFromGridPreset(preset) {
+      if (!preset || typeof preset !== "object") return null;
+      const cs = Number(preset.col_start);
+      const ce = Number(preset.col_end);
+      const rs = Number(preset.row_start);
+      const re = Number(preset.row_end);
+      if (![cs, ce, rs, re].every(Number.isFinite)) return null;
+      if (cs < 1 || ce > 10 || rs < 1 || re > 10) return null;
+      if (ce < cs || re < rs) return null;
+      const x = (cs - 1) / 10;
+      const y = (rs - 1) / 10;
+      const w = (ce - cs + 1) / 10;
+      const h = (re - rs + 1) / 10;
+      return { x, y, w, h };
+    }
+
+    function getPlayableGridPresetForFrame(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      for (const slug of slugs) {
+        const preset = HLL_MAP_PLAYABLE_GRID_PRESETS[slug];
+        if (preset) return preset;
+      }
+      return null;
     }
 
     function defaultHllPlayableRect() {
@@ -814,8 +853,14 @@
         if (cached && cached.ok && cached.img) {
           state.mapVisual = { ...state.mapVisual, status: "ready", img: cached.img, src };
           if (!state.mapVisual.playableRect) {
-            state.mapVisual.playableRect = detectPlayableRectFromImage(cached.img) || defaultHllPlayableRect();
-            state.mapVisual.playableRectSource = state.mapVisual.playableRect ? "image" : "hll-default";
+            const presetPlayable = getMapPlayableRectPreset(frame);
+            if (presetPlayable) {
+              state.mapVisual.playableRect = presetPlayable;
+              state.mapVisual.playableRectSource = "preset";
+            } else {
+              state.mapVisual.playableRect = detectPlayableRectFromImage(cached.img) || defaultHllPlayableRect();
+              state.mapVisual.playableRectSource = state.mapVisual.playableRect ? "image" : "hll-default";
+            }
           }
           if (state.frame) drawFrame(state.frame);
           return;
@@ -829,14 +874,15 @@
         img.onload = () => {
           state.mapVisualCache[src] = { ok: true, img };
           if (state.mapVisual.key !== expectedKey) return;
-          const detectedPlayable = detectPlayableRectFromImage(img) || defaultHllPlayableRect();
+          const presetPlayable = getMapPlayableRectPreset(frame);
+          const detectedPlayable = presetPlayable || detectPlayableRectFromImage(img) || defaultHllPlayableRect();
           state.mapVisual = {
             ...state.mapVisual,
             status: "ready",
             img,
             src,
             playableRect: detectedPlayable,
-            playableRectSource: detectedPlayable ? "image" : "hll-default",
+            playableRectSource: presetPlayable ? "preset" : (detectedPlayable ? "image" : "hll-default"),
           };
           if (state.frame) drawFrame(state.frame);
         };
