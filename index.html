@@ -219,6 +219,9 @@
     // - map images can include gray border around playable area
     const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
     const HLL_USE_UNIFORM_SCALE = true;
+    const HLL_WORLD_MIN = -50000;
+    const HLL_WORLD_MAX = 50000;
+    const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
       utah_beach: "utah",
@@ -571,12 +574,40 @@
       return [...fromWindow, ...fromFrame];
     }
 
+    function median(values) {
+      if (!values.length) return null;
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 1) return sorted[mid];
+      return (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    function estimateHllTargetBounds(points) {
+      if (!points || points.length < 12) return null;
+      const xs = points.map(p => p.x);
+      const ys = points.map(p => p.y);
+      const cx = median(xs);
+      const cy = median(ys);
+      if (![cx, cy].every(Number.isFinite)) return null;
+
+      // HLL playable world is effectively square. Use fixed span to avoid
+      // "player cloud bounds" drift when teams cluster.
+      const half = 100000;
+      return {
+        xMin: cx - half,
+        xMax: cx + half,
+        yMin: cy - half,
+        yMax: cy + half,
+      };
+    }
+
     function estimateProjectionForFrame(frame) {
       const points = collectCalibrationPoints(frame);
       if (points.length < 18) return null;
 
       const explicitBounds = normalizeBounds(frame.map_bounds || null) || getMapBoundsFromInputs(false);
-      const target = explicitBounds || detectBounds(points.map(p => ({ world_position: p })), { projection: normalizeProjection({}) });
+      const hllTarget = estimateHllTargetBounds(points);
+      const target = explicitBounds || hllTarget || detectBounds(points.map(p => ({ world_position: p })), { projection: normalizeProjection({}) });
       if (!target) return null;
 
       const candidates = [
