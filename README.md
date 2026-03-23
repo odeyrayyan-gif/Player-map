@@ -17,7 +17,7 @@ This standalone app uses its own local backend proxy and recording storage.
 From repo root:
 
 ```bash
-python3 "player_map_app/server.py"
+python3 "server.py"
 ```
 
 Open:
@@ -32,6 +32,9 @@ In the web UI:
 - **Gamestate URL**: optional (or auto-derived)
 - **Cookie**: copy full `Cookie` header value from CRCON request (if endpoint is closed)
 - **Poll interval**: e.g. `2000`
+- **Map bounds** (`xMin/xMax/yMin/yMax`): optional but recommended for fixed map scale
+  - If left blank, app tries to read map bounds from gamestate/team-view payload
+  - If payload has no bounds, app falls back to auto-bounds from observed player positions
 
 Then click **Save Config** and **Test Live**.
 
@@ -45,7 +48,7 @@ Then click **Save Config** and **Test Live**.
 
 Replay files are saved in:
 
-`player_map_app/matches/*.jsonl`
+`matches/*.jsonl`
 
 ## Is there a free way to use this?
 

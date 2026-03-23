@@ -125,6 +125,10 @@
       </div>
       <div class="row">
         <input id="pollMs" placeholder="Poll interval ms (e.g. 2000)" style="max-width:180px" />
+        <input id="mapXMin" placeholder="xMin" style="max-width:110px" />
+        <input id="mapXMax" placeholder="xMax" style="max-width:110px" />
+        <input id="mapYMin" placeholder="yMin" style="max-width:110px" />
+        <input id="mapYMax" placeholder="yMax" style="max-width:110px" />
         <button id="saveCfgBtn">Save Config</button>
         <button id="testLiveBtn">Test Live</button>
       </div>
@@ -189,6 +193,7 @@
       projected: [],
       events: [],
       lastFrame: null,
+      autoBoundsByMap: {},
     };
 
     async function api(path, options = {}) {
@@ -201,13 +206,58 @@
     function setStatus(msg) { $("status").textContent = msg; }
 
     function getCfgFromInputs() {
+      const mapBounds = getMapBoundsFromInputs(true);
       return {
         live_stats_url: $("liveStatsUrl").value.trim(),
         team_view_url: $("teamViewUrl").value.trim(),
         gamestate_url: $("gamestateUrl").value.trim(),
         cookie: $("cookie").value.trim(),
         poll_interval_ms: Number($("pollMs").value || 2000),
+        map_bounds: mapBounds || {},
       };
+    }
+
+    function normalizeBounds(raw) {
+      if (!raw || typeof raw !== "object") return null;
+      const xMin = Number(raw.x_min);
+      const xMax = Number(raw.x_max);
+      const yMin = Number(raw.y_min);
+      const yMax = Number(raw.y_max);
+      if (![xMin, xMax, yMin, yMax].every(Number.isFinite)) return null;
+      if (xMax <= xMin || yMax <= yMin) return null;
+      return { xMin, xMax, yMin, yMax };
+    }
+
+    function setMapBoundsInputs(rawBounds) {
+      const b = normalizeBounds(rawBounds);
+      $("mapXMin").value = b ? String(b.xMin) : "";
+      $("mapXMax").value = b ? String(b.xMax) : "";
+      $("mapYMin").value = b ? String(b.yMin) : "";
+      $("mapYMax").value = b ? String(b.yMax) : "";
+    }
+
+    function getMapBoundsFromInputs(strict = false) {
+      const sxMin = $("mapXMin").value.trim();
+      const sxMax = $("mapXMax").value.trim();
+      const syMin = $("mapYMin").value.trim();
+      const syMax = $("mapYMax").value.trim();
+
+      if (!sxMin && !sxMax && !syMin && !syMax) return null;
+
+      const xMin = Number(sxMin);
+      const xMax = Number(sxMax);
+      const yMin = Number(syMin);
+      const yMax = Number(syMax);
+      const valid = [xMin, xMax, yMin, yMax].every(Number.isFinite) && xMax > xMin && yMax > yMin;
+
+      if (!valid) {
+        if (strict) {
+          throw new Error("Map bounds invalid. Set xMin/xMax/yMin/yMax with max > min, or clear all four.");
+        }
+        return null;
+      }
+
+      return { x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax };
     }
 
     async function loadConfig() {
@@ -218,6 +268,7 @@
       $("gamestateUrl").value = c.gamestate_url || "";
       $("cookie").value = c.cookie || "";
       $("pollMs").value = c.poll_interval_ms || 2000;
+      setMapBoundsInputs(c.map_bounds || null);
     }
 
     async function saveConfig() {
@@ -267,6 +318,34 @@
       return { xMin: xMin - xp, xMax: xMax + xp, yMin: yMin - yp, yMax: yMax + yp };
     }
 
+    function mergeBounds(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+      return {
+        xMin: Math.min(a.xMin, b.xMin),
+        xMax: Math.max(a.xMax, b.xMax),
+        yMin: Math.min(a.yMin, b.yMin),
+        yMax: Math.max(a.yMax, b.yMax),
+      };
+    }
+
+    function getRenderBounds(frame, players) {
+      const explicit = normalizeBounds(frame.map_bounds || null);
+      if (explicit) {
+        return { ...explicit, source: frame.map_bounds_source || "configured" };
+      }
+
+      const mapKey = String(frame.map_name || "UNKNOWN MAP").toUpperCase();
+      const sample = detectBounds(players);
+      const cached = state.autoBoundsByMap[mapKey] || null;
+      const merged = mergeBounds(cached, sample);
+      if (merged) {
+        state.autoBoundsByMap[mapKey] = merged;
+        return { ...merged, source: "auto" };
+      }
+      return null;
+    }
+
     function project(v, min, max, size) {
       if (max === min) return size / 2;
       return ((v - min) / (max - min)) * size;
@@ -276,7 +355,10 @@
       state.frame = frame;
       $("mapName").textContent = frame.map_name || "UNKNOWN MAP";
       const ts = frame.ts_iso ? new Date(frame.ts_iso).toLocaleTimeString() : "n/a";
-      $("frameInfo").textContent = `${(frame.players || []).length} players · ${ts}`;
+      const players = frame.players || [];
+      const bounds = getRenderBounds(frame, players);
+      const boundsSrc = bounds ? (bounds.source || "auto") : "none";
+      $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc}`;
 
       const canvas = $("mapCanvas");
       const rect = canvas.getBoundingClientRect();
@@ -290,13 +372,11 @@
       for (let x = 0; x < canvas.width; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
       for (let y = 0; y < canvas.height; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
 
-      const players = frame.players || [];
-      const bounds = detectBounds(players);
       state.projected = [];
       if (!bounds) {
         ctx.fillStyle = "rgba(255,255,255,0.5)";
         ctx.font = "14px Arial";
-        ctx.fillText("No world_position data in this frame.", 16, 24);
+        ctx.fillText("No usable world_position/map bounds in this frame.", 16, 24);
         return;
       }
 

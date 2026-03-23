@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "gamestate_url": "",
     "cookie": "",
     "poll_interval_ms": 2000,
+    "map_bounds": {},
 }
 
 STATE_LOCK = threading.Lock()
@@ -134,9 +135,11 @@ def fetch_first_ok_json(url_candidates, cookie_header):
         try:
             return fetch_json_url(raw, cookie_header)
         except urllib.error.HTTPError as e:
-            last_error = f"HTTP {e.code}"
+            last_error = f"HTTP {e.code} ({raw})"
+        except urllib.error.URLError as e:
+            last_error = f"{e.reason} ({raw})"
         except Exception as e:
-            last_error = str(e)
+            last_error = f"{str(e)} ({raw})"
     raise RuntimeError(last_error)
 
 
@@ -151,6 +154,80 @@ def extract_map_name(payload):
     if result.get("pretty_name"):
         return str(result["pretty_name"]).upper()
     return "UNKNOWN MAP"
+
+
+def to_float_or_none(value):
+    try:
+        out = float(value)
+        if out != out:  # NaN
+            return None
+        return out
+    except Exception:
+        return None
+
+
+def normalize_bounds(raw):
+    if not isinstance(raw, dict):
+        return None
+
+    aliases = {
+        "x_min": ["x_min", "xmin", "min_x", "left"],
+        "x_max": ["x_max", "xmax", "max_x", "right"],
+        "y_min": ["y_min", "ymin", "min_y", "bottom"],
+        "y_max": ["y_max", "ymax", "max_y", "top"],
+    }
+    out = {}
+    for canon, keys in aliases.items():
+        value = None
+        for key in keys:
+            if key in raw:
+                value = to_float_or_none(raw.get(key))
+                if value is not None:
+                    break
+        out[canon] = value
+
+    x_min = out["x_min"]
+    x_max = out["x_max"]
+    y_min = out["y_min"]
+    y_max = out["y_max"]
+
+    if None in (x_min, x_max, y_min, y_max):
+        return None
+    if x_max <= x_min or y_max <= y_min:
+        return None
+
+    return {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max}
+
+
+def extract_map_bounds(payload):
+    result = payload.get("result", payload) if isinstance(payload, dict) else {}
+    if not isinstance(result, dict):
+        return None
+
+    candidates = [
+        result,
+        result.get("map"),
+        result.get("current_map"),
+    ]
+    nested_keys = (
+        "bounds",
+        "map_bounds",
+        "world_bounds",
+        "playable_bounds",
+        "extent",
+        "extents",
+    )
+
+    for source in list(candidates):
+        if isinstance(source, dict):
+            for key in nested_keys:
+                candidates.append(source.get(key))
+
+    for candidate in candidates:
+        bounds = normalize_bounds(candidate)
+        if bounds:
+            return bounds
+    return None
 
 
 def extract_teams(payload):
@@ -242,17 +319,38 @@ def build_frame(cfg):
         gs_candidates.extend(build_variant_candidates(seed, game_targets))
     gs_candidates = dedupe_keep_order(gs_candidates)
 
-    map_name = "UNKNOWN MAP"
+    map_name = extract_map_name(tv_data)
+    map_bounds = normalize_bounds(cfg.get("map_bounds")) or None
+    map_bounds_source = "config" if map_bounds else "auto"
+
+    if not map_bounds:
+        tv_bounds = extract_map_bounds(tv_data)
+        if tv_bounds:
+            map_bounds = tv_bounds
+            map_bounds_source = "team_view"
+
     try:
         gs_data = fetch_first_ok_json(gs_candidates, cookie)
-        map_name = extract_map_name(gs_data)
+        gs_map_name = extract_map_name(gs_data)
+        if gs_map_name != "UNKNOWN MAP":
+            map_name = gs_map_name
+        if not map_bounds:
+            gs_bounds = extract_map_bounds(gs_data)
+            if gs_bounds:
+                map_bounds = gs_bounds
+                map_bounds_source = "gamestate"
     except Exception:
         pass
+
+    if not map_name:
+        map_name = "UNKNOWN MAP"
 
     return {
         "ts_unix": time.time(),
         "ts_iso": now_iso(),
         "map_name": map_name,
+        "map_bounds": map_bounds,
+        "map_bounds_source": map_bounds_source,
         "allied": allied_data,
         "axis": axis_data,
         "players": players,
@@ -407,8 +505,17 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
             data = {}
 
         if path == "/api/config":
-            allowed = {"live_stats_url", "team_view_url", "gamestate_url", "cookie", "poll_interval_ms"}
+            allowed = {
+                "live_stats_url",
+                "team_view_url",
+                "gamestate_url",
+                "cookie",
+                "poll_interval_ms",
+                "map_bounds",
+            }
             update = {k: v for k, v in data.items() if k in allowed}
+            if "map_bounds" in update:
+                update["map_bounds"] = normalize_bounds(update.get("map_bounds")) or {}
             cfg = write_config(update)
             self.send_json({"ok": True, "config": cfg})
             return
