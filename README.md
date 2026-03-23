@@ -35,6 +35,14 @@ In the web UI:
 - **Map bounds** (`xMin/xMax/yMin/yMax`): optional but recommended for fixed map scale
   - If left blank, app tries to read map bounds from gamestate/team-view payload
   - If payload has no bounds, app falls back to auto-bounds from observed player positions
+- **Map visuals**: optional auto-load from gamestate map identifiers
+  - Put images in `maps/` (repo root)
+  - File naming is auto-resolved from gamestate in this order:
+    1) `map.image_name` (or `result.image_name`)
+    2) `map.shortname` (or `result.shortname`)
+    3) normalized `pretty_name`
+  - Supported extensions: `.webp`, `.png`, `.jpg`, `.jpeg`
+  - Example: if gamestate says `image_name: "foy"`, save `maps/foy.png`
 
 Then click **Save Config** and **Test Live**.
 

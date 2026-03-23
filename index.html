@@ -183,6 +183,27 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const MAP_VISUAL_EXTENSIONS = ["webp", "png", "jpg", "jpeg"];
+    const MAP_LAYER_WORDS = new Set([
+      "warfare",
+      "offensive",
+      "skirmish",
+      "night",
+      "day",
+      "dusk",
+      "dawn",
+      "rain",
+      "snow",
+      "clear",
+      "us",
+      "usa",
+      "ger",
+      "germany",
+      "british",
+      "soviet",
+      "axis",
+      "allies",
+    ]);
     const state = {
       mode: "live",
       liveTimer: null,
@@ -194,6 +215,8 @@
       events: [],
       lastFrame: null,
       autoBoundsByMap: {},
+      mapVisual: { key: "", status: "idle", img: null, src: "" },
+      mapVisualCache: {},
     };
 
     async function api(path, options = {}) {
@@ -302,6 +325,110 @@
       $("events").innerHTML = state.events.map(e => `<div class="event">${e}</div>`).join("");
     }
 
+    function dedupe(values) {
+      return [...new Set(values.filter(Boolean))];
+    }
+
+    function normalizeMapSlug(raw) {
+      return String(raw || "")
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function trimLayerWordsFromSlug(slug) {
+      const parts = normalizeMapSlug(slug).split("_").filter(Boolean);
+      while (parts.length > 1 && MAP_LAYER_WORDS.has(parts[parts.length - 1])) {
+        parts.pop();
+      }
+      return parts.join("_");
+    }
+
+    function getMapSlugCandidates(frame) {
+      const byImage = normalizeMapSlug(frame.map_image_name);
+      const byShort = normalizeMapSlug(frame.map_shortname);
+      const byName = normalizeMapSlug(frame.map_name);
+      const trimmedName = trimLayerWordsFromSlug(frame.map_name);
+      return dedupe([byImage, byShort, trimmedName, byName]);
+    }
+
+    function getMapVisualPathCandidates(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      const out = [];
+      for (const slug of slugs) {
+        for (const ext of MAP_VISUAL_EXTENSIONS) {
+          out.push(`/maps/${slug}.${ext}`);
+        }
+      }
+      return dedupe(out);
+    }
+
+    function getMapVisualStatus() {
+      const status = state.mapVisual.status;
+      if (status === "ready" && state.mapVisual.src) return `visual:${state.mapVisual.src}`;
+      if (status === "loading") return "visual:loading";
+      if (status === "missing") return "visual:missing";
+      return "visual:off";
+    }
+
+    function resolveMapVisual(frame) {
+      if (!frame || typeof frame !== "object") return;
+      const key = [
+        normalizeMapSlug(frame.map_image_name),
+        normalizeMapSlug(frame.map_shortname),
+        normalizeMapSlug(frame.map_name),
+      ].join("|");
+      if (state.mapVisual.key === key) return;
+
+      const candidates = getMapVisualPathCandidates(frame);
+      state.mapVisual = {
+        key,
+        status: candidates.length ? "loading" : "missing",
+        img: null,
+        src: "",
+      };
+      if (!candidates.length) return;
+
+      const expectedKey = key;
+      const tryLoad = (index) => {
+        if (state.mapVisual.key !== expectedKey) return;
+        if (index >= candidates.length) {
+          state.mapVisual = { ...state.mapVisual, status: "missing", img: null, src: "" };
+          if (state.frame) drawFrame(state.frame);
+          return;
+        }
+
+        const src = candidates[index];
+        const cached = state.mapVisualCache[src];
+        if (cached && cached.ok && cached.img) {
+          state.mapVisual = { ...state.mapVisual, status: "ready", img: cached.img, src };
+          if (state.frame) drawFrame(state.frame);
+          return;
+        }
+        if (cached && cached.ok === false) {
+          tryLoad(index + 1);
+          return;
+        }
+
+        const img = new Image();
+        img.onload = () => {
+          state.mapVisualCache[src] = { ok: true, img };
+          if (state.mapVisual.key !== expectedKey) return;
+          state.mapVisual = { ...state.mapVisual, status: "ready", img, src };
+          if (state.frame) drawFrame(state.frame);
+        };
+        img.onerror = () => {
+          state.mapVisualCache[src] = { ok: false, img: null };
+          if (state.mapVisual.key !== expectedKey) return;
+          tryLoad(index + 1);
+        };
+        img.src = src;
+      };
+
+      tryLoad(0);
+    }
+
     function detectBounds(players) {
       let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
       let n = 0;
@@ -358,7 +485,7 @@
       const players = frame.players || [];
       const bounds = getRenderBounds(frame, players);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
-      $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc}`;
+      $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()}`;
 
       const canvas = $("mapCanvas");
       const rect = canvas.getBoundingClientRect();
@@ -366,6 +493,13 @@
       canvas.height = Math.max(400, Math.floor(rect.height));
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (state.mapVisual.status === "ready" && state.mapVisual.img) {
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.drawImage(state.mapVisual.img, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      }
 
       // grid
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
@@ -409,6 +543,7 @@
     function applyFrame(frame, prevOverride = null) {
       const prev = prevOverride !== null ? prevOverride : state.lastFrame;
       addEvents(diffEvents(prev, frame));
+      resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
       state.lastFrame = frame;

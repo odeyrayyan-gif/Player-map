@@ -143,17 +143,48 @@ def fetch_first_ok_json(url_candidates, cookie_header):
     raise RuntimeError(last_error)
 
 
-def extract_map_name(payload):
+def normalize_map_key(value):
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def extract_map_meta(payload):
     result = payload.get("result", payload) if isinstance(payload, dict) else {}
     if not isinstance(result, dict):
-        return "UNKNOWN MAP"
-    if isinstance(result.get("map"), dict) and result["map"].get("pretty_name"):
-        return str(result["map"]["pretty_name"]).upper()
-    if isinstance(result.get("current_map"), dict) and result["current_map"].get("pretty_name"):
-        return str(result["current_map"]["pretty_name"]).upper()
-    if result.get("pretty_name"):
-        return str(result["pretty_name"]).upper()
-    return "UNKNOWN MAP"
+        return {"map_name": "UNKNOWN MAP", "map_shortname": "", "map_image_name": ""}
+
+    sources = []
+    if isinstance(result.get("map"), dict):
+        sources.append(result["map"])
+    if isinstance(result.get("current_map"), dict):
+        sources.append(result["current_map"])
+    sources.append(result)
+
+    pretty_name = ""
+    shortname = ""
+    image_name = ""
+
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        if not pretty_name and src.get("pretty_name"):
+            pretty_name = str(src.get("pretty_name")).strip()
+        if not shortname and src.get("shortname"):
+            shortname = normalize_map_key(src.get("shortname"))
+        if not image_name and src.get("image_name"):
+            image_name = normalize_map_key(src.get("image_name"))
+
+    if not shortname and image_name:
+        shortname = image_name
+
+    map_name = pretty_name.upper() if pretty_name else "UNKNOWN MAP"
+    return {
+        "map_name": map_name,
+        "map_shortname": shortname,
+        "map_image_name": image_name,
+    }
 
 
 def to_float_or_none(value):
@@ -319,7 +350,10 @@ def build_frame(cfg):
         gs_candidates.extend(build_variant_candidates(seed, game_targets))
     gs_candidates = dedupe_keep_order(gs_candidates)
 
-    map_name = extract_map_name(tv_data)
+    tv_meta = extract_map_meta(tv_data)
+    map_name = tv_meta["map_name"]
+    map_shortname = tv_meta["map_shortname"]
+    map_image_name = tv_meta["map_image_name"]
     map_bounds = normalize_bounds(cfg.get("map_bounds")) or None
     map_bounds_source = "config" if map_bounds else "auto"
 
@@ -331,9 +365,13 @@ def build_frame(cfg):
 
     try:
         gs_data = fetch_first_ok_json(gs_candidates, cookie)
-        gs_map_name = extract_map_name(gs_data)
-        if gs_map_name != "UNKNOWN MAP":
-            map_name = gs_map_name
+        gs_meta = extract_map_meta(gs_data)
+        if gs_meta["map_name"] != "UNKNOWN MAP":
+            map_name = gs_meta["map_name"]
+        if gs_meta["map_shortname"]:
+            map_shortname = gs_meta["map_shortname"]
+        if gs_meta["map_image_name"]:
+            map_image_name = gs_meta["map_image_name"]
         if not map_bounds:
             gs_bounds = extract_map_bounds(gs_data)
             if gs_bounds:
@@ -349,6 +387,8 @@ def build_frame(cfg):
         "ts_unix": time.time(),
         "ts_iso": now_iso(),
         "map_name": map_name,
+        "map_shortname": map_shortname,
+        "map_image_name": map_image_name,
         "map_bounds": map_bounds,
         "map_bounds_source": map_bounds_source,
         "allied": allied_data,
