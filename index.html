@@ -252,6 +252,7 @@
       autoBoundsByMap: {},
       mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
       mapVisualCache: {},
+      calibrationSamples: [],
     };
 
     async function api(path, options = {}) {
@@ -413,6 +414,7 @@
 
     function projectWorld(rawPos, frame) {
       if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
+      if (rawPos.x === 0 && rawPos.y === 0) return null;
       const p = normalizeProjection(frame.projection || null) || normalizeProjection({});
       if (!p) return { x: rawPos.x, y: rawPos.y };
       let x = rawPos.x;
@@ -429,6 +431,7 @@
 
     function projectWorldWithProjection(rawPos, projection) {
       if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
+      if (rawPos.x === 0 && rawPos.y === 0) return null;
       const p = normalizeProjection(projection || null) || normalizeProjection({});
       if (!p) return { x: rawPos.x, y: rawPos.y };
       let x = rawPos.x;
@@ -522,12 +525,58 @@
       return sorted[lo] * (1 - t) + sorted[hi] * t;
     }
 
+    function getMapCalibrationKey(frame) {
+      const short = normalizeMapSlug(frame?.map_shortname || "");
+      const img = normalizeMapSlug(frame?.map_image_name || "");
+      const name = normalizeMapSlug(frame?.map_name || "");
+      return short || img || name || "unknown_map";
+    }
+
+    function isLikelyValidCalibrationPoint(pos) {
+      if (!pos || typeof pos.x !== "number" || typeof pos.y !== "number") return false;
+      if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return false;
+      if (pos.x === 0 && pos.y === 0) return false;
+      const maxAbs = 300000;
+      if (Math.abs(pos.x) > maxAbs || Math.abs(pos.y) > maxAbs) return false;
+      return true;
+    }
+
+    function recordCalibrationSample(frame) {
+      if (!frame) return;
+      const key = getMapCalibrationKey(frame);
+      const points = (frame.players || [])
+        .map(p => p?.world_position)
+        .filter(isLikelyValidCalibrationPoint)
+        .map(p => ({ x: p.x, y: p.y }));
+      if (points.length < 6) return;
+      const now = Number(frame.ts_unix) || (Date.now() / 1000);
+      state.calibrationSamples.push({ key, ts: now, points });
+      const keepAgeSeconds = 180;
+      const keepMax = 120;
+      state.calibrationSamples = state.calibrationSamples
+        .filter(s => (now - s.ts) <= keepAgeSeconds)
+        .slice(-keepMax);
+    }
+
+    function collectCalibrationPoints(frame) {
+      const key = getMapCalibrationKey(frame);
+      const now = Number(frame?.ts_unix) || (Date.now() / 1000);
+      const fromWindow = state.calibrationSamples
+        .filter(s => s.key === key && (now - s.ts) <= 180)
+        .flatMap(s => s.points);
+      const fromFrame = (frame?.players || [])
+        .map(p => p?.world_position)
+        .filter(isLikelyValidCalibrationPoint)
+        .map(p => ({ x: p.x, y: p.y }));
+      return [...fromWindow, ...fromFrame];
+    }
+
     function estimateProjectionForFrame(frame) {
-      const players = (frame?.players || []).filter(p => p?.world_position && typeof p.world_position.x === "number" && typeof p.world_position.y === "number");
-      if (players.length < 8) return null;
+      const points = collectCalibrationPoints(frame);
+      if (points.length < 18) return null;
 
       const explicitBounds = normalizeBounds(frame.map_bounds || null) || getMapBoundsFromInputs(false);
-      const target = explicitBounds || detectBounds(players, { projection: normalizeProjection({}) });
+      const target = explicitBounds || detectBounds(points.map(p => ({ world_position: p })), { projection: normalizeProjection({}) });
       if (!target) return null;
 
       const candidates = [
@@ -549,18 +598,18 @@
 
       for (const c of candidates) {
         const oriented = [];
-        for (const p of players) {
-          const v = projectWorldWithProjection(p.world_position, { ...c, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 });
+        for (const p of points) {
+          const v = projectWorldWithProjection(p, { ...c, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 });
           if (v) oriented.push(v);
         }
-        if (oriented.length < 8) continue;
+        if (oriented.length < 18) continue;
 
         const xs = oriented.map(v => v.x).sort((a, b) => a - b);
         const ys = oriented.map(v => v.y).sort((a, b) => a - b);
-        const xLo = quantile(xs, 0.02);
-        const xHi = quantile(xs, 0.98);
-        const yLo = quantile(ys, 0.02);
-        const yHi = quantile(ys, 0.98);
+        const xLo = quantile(xs, 0.05);
+        const xHi = quantile(xs, 0.95);
+        const yLo = quantile(ys, 0.05);
+        const yHi = quantile(ys, 0.95);
         if (![xLo, xHi, yLo, yHi].every(Number.isFinite)) continue;
         if (xHi <= xLo || yHi <= yLo) continue;
 
@@ -583,14 +632,14 @@
         let inBounds = 0;
         let sx = 0;
         let sy = 0;
-        for (const p of players) {
-          const wp = projectWorldWithProjection(p.world_position, proj);
+        for (const p of points) {
+          const wp = projectWorldWithProjection(p, proj);
           if (!wp) continue;
           sx += wp.x;
           sy += wp.y;
           if (wp.x >= target.xMin && wp.x <= target.xMax && wp.y >= target.yMin && wp.y <= target.yMax) inBounds++;
         }
-        const n = players.length;
+        const n = points.length;
         const inRatio = n ? (inBounds / n) : 0;
         const mx = sx / n;
         const my = sy / n;
@@ -605,7 +654,7 @@
         if (c.swap_xy) score -= 0.03;
 
         if (!best || score > best.score) {
-          best = { score, proj, inRatio };
+          best = { score, proj, inRatio, sampleCount: n };
         }
       }
 
@@ -627,7 +676,7 @@
       setProjectionInputs(fit.proj);
       drawFrame(frame);
       renderRoster(frame);
-      setStatus(`Auto calibration applied (in-bounds ~${Math.round(fit.inRatio * 100)}%). Click Save Config to persist.`);
+      setStatus(`Auto calibration applied (in-bounds ~${Math.round(fit.inRatio * 100)}%, samples:${fit.sampleCount || "?"}). Click Save Config to persist.`);
     }
 
     function dedupe(values) {
@@ -952,6 +1001,7 @@
     function applyFrame(frame, prevOverride = null) {
       const prev = prevOverride !== null ? prevOverride : state.lastFrame;
       addEvents(diffEvents(prev, frame));
+      recordCalibrationSample(frame);
       resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
