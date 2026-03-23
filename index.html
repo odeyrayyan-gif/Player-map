@@ -222,14 +222,15 @@
     const HLL_WORLD_MIN = -50000;
     const HLL_WORLD_MAX = 50000;
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
+    const HLL_GRID_CELLS = 10;
+    const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
-      // St. Marie Du Mont:
-      // - rows A/B and I/J are unplayable
-      // - cols 1/2 and 9/10 are unplayable
-      // => playable rows C..H and cols 3..8 on a 10x10 grid.
-      smdm: { col_start: 3, col_end: 8, row_start: 3, row_end: 8 },
-      stmariedumont: { col_start: 3, col_end: 8, row_start: 3, row_end: 8 },
-      stmariedumont_day_webp: { col_start: 3, col_end: 8, row_start: 3, row_end: 8 },
+      // St. Marie Du Mont (vertical playable strip):
+      // - rows C..H playable
+      // - cols 1..10 playable
+      smdm: { col_start: 1, col_end: 10, row_start: 3, row_end: 8 },
+      stmariedumont: { col_start: 1, col_end: 10, row_start: 3, row_end: 8 },
+      stmariedumont_day_webp: { col_start: 1, col_end: 10, row_start: 3, row_end: 8 },
     };
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
@@ -556,6 +557,34 @@
       return { x: inset, y: inset, w: size, h: size };
     }
 
+    function estimateStripPlayableRectFromPoints(frame) {
+      const points = collectCalibrationPoints(frame);
+      if (!points || points.length < 24) return null;
+      const xs = points.map(p => p.x).sort((a, b) => a - b);
+      const ys = points.map(p => p.y).sort((a, b) => a - b);
+      const xLo = quantile(xs, 0.1);
+      const xHi = quantile(xs, 0.9);
+      const yLo = quantile(ys, 0.1);
+      const yHi = quantile(ys, 0.9);
+      if (![xLo, xHi, yLo, yHi].every(Number.isFinite)) return null;
+      if (xHi <= xLo || yHi <= yLo) return null;
+
+      const xRange = xHi - xLo;
+      const yRange = yHi - yLo;
+      const stripSize = (HLL_GRID_CELLS - HLL_STRIP_INSET_CELLS * 2) / HLL_GRID_CELLS; // 0.6
+      const stripInset = HLL_STRIP_INSET_CELLS / HLL_GRID_CELLS; // 0.2
+
+      // If players span much wider than tall, we assume top/bottom border bars.
+      if (xRange > yRange * 1.25) {
+        return { rect: { x: 0, y: stripInset, w: 1, h: stripSize }, source: "points-strip-h" };
+      }
+      // If players span much taller than wide, we assume left/right border bars.
+      if (yRange > xRange * 1.25) {
+        return { rect: { x: stripInset, y: 0, w: stripSize, h: 1 }, source: "points-strip-v" };
+      }
+      return null;
+    }
+
     function quantile(sorted, q) {
       if (!sorted.length) return null;
       if (sorted.length === 1) return sorted[0];
@@ -858,8 +887,14 @@
               state.mapVisual.playableRect = presetPlayable;
               state.mapVisual.playableRectSource = "preset";
             } else {
-              state.mapVisual.playableRect = detectPlayableRectFromImage(cached.img) || defaultHllPlayableRect();
-              state.mapVisual.playableRectSource = state.mapVisual.playableRect ? "image" : "hll-default";
+              const stripPlayable = estimateStripPlayableRectFromPoints(frame);
+              if (stripPlayable?.rect) {
+                state.mapVisual.playableRect = stripPlayable.rect;
+                state.mapVisual.playableRectSource = stripPlayable.source || "points-strip";
+              } else {
+                state.mapVisual.playableRect = detectPlayableRectFromImage(cached.img) || defaultHllPlayableRect();
+                state.mapVisual.playableRectSource = state.mapVisual.playableRect ? "image" : "hll-default";
+              }
             }
           }
           if (state.frame) drawFrame(state.frame);
@@ -875,14 +910,21 @@
           state.mapVisualCache[src] = { ok: true, img };
           if (state.mapVisual.key !== expectedKey) return;
           const presetPlayable = getMapPlayableRectPreset(frame);
-          const detectedPlayable = presetPlayable || detectPlayableRectFromImage(img) || defaultHllPlayableRect();
+          const stripPlayable = presetPlayable ? null : estimateStripPlayableRectFromPoints(frame);
+          const detectedPlayable =
+            presetPlayable ||
+            stripPlayable?.rect ||
+            detectPlayableRectFromImage(img) ||
+            defaultHllPlayableRect();
           state.mapVisual = {
             ...state.mapVisual,
             status: "ready",
             img,
             src,
             playableRect: detectedPlayable,
-            playableRectSource: presetPlayable ? "preset" : (detectedPlayable ? "image" : "hll-default"),
+            playableRectSource: presetPlayable
+              ? "preset"
+              : (stripPlayable?.source || (detectedPlayable ? "image" : "hll-default")),
           };
           if (state.frame) drawFrame(state.frame);
         };
