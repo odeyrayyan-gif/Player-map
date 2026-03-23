@@ -26,6 +26,15 @@ DEFAULT_CONFIG = {
     "cookie": "",
     "poll_interval_ms": 2000,
     "map_bounds": {},
+    "projection": {
+        "flip_x": False,
+        "flip_y": False,
+        "swap_xy": False,
+        "scale_x": 1.0,
+        "scale_y": 1.0,
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+    },
 }
 
 STATE_LOCK = threading.Lock()
@@ -250,6 +259,39 @@ def normalize_bounds(raw):
     return {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max}
 
 
+def normalize_projection(raw):
+    base = {
+        "flip_x": False,
+        "flip_y": False,
+        "swap_xy": False,
+        "scale_x": 1.0,
+        "scale_y": 1.0,
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+    }
+    if not isinstance(raw, dict):
+        return dict(base)
+
+    out = dict(base)
+    out["flip_x"] = bool(raw.get("flip_x", base["flip_x"]))
+    out["flip_y"] = bool(raw.get("flip_y", base["flip_y"]))
+    out["swap_xy"] = bool(raw.get("swap_xy", base["swap_xy"]))
+    out["scale_x"] = to_float_or_none(raw.get("scale_x"))
+    out["scale_y"] = to_float_or_none(raw.get("scale_y"))
+    out["offset_x"] = to_float_or_none(raw.get("offset_x"))
+    out["offset_y"] = to_float_or_none(raw.get("offset_y"))
+
+    if out["scale_x"] is None or abs(out["scale_x"]) < 1e-9:
+        out["scale_x"] = base["scale_x"]
+    if out["scale_y"] is None or abs(out["scale_y"]) < 1e-9:
+        out["scale_y"] = base["scale_y"]
+    if out["offset_x"] is None:
+        out["offset_x"] = base["offset_x"]
+    if out["offset_y"] is None:
+        out["offset_y"] = base["offset_y"]
+    return out
+
+
 def extract_map_bounds(payload):
     result = payload.get("result", payload) if isinstance(payload, dict) else {}
     if not isinstance(result, dict):
@@ -386,6 +428,7 @@ def build_frame(cfg):
     map_image_name = tv_meta["map_image_name"]
     map_bounds = normalize_bounds(cfg.get("map_bounds")) or None
     map_bounds_source = "config" if map_bounds else "auto"
+    projection = normalize_projection(cfg.get("projection"))
 
     if not map_bounds:
         tv_bounds = extract_map_bounds(tv_data)
@@ -421,6 +464,7 @@ def build_frame(cfg):
         "map_image_name": map_image_name,
         "map_bounds": map_bounds,
         "map_bounds_source": map_bounds_source,
+        "projection": projection,
         "allied": allied_data,
         "axis": axis_data,
         "players": players,
@@ -582,10 +626,13 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
                 "cookie",
                 "poll_interval_ms",
                 "map_bounds",
+                "projection",
             }
             update = {k: v for k, v in data.items() if k in allowed}
             if "map_bounds" in update:
                 update["map_bounds"] = normalize_bounds(update.get("map_bounds")) or {}
+            if "projection" in update:
+                update["projection"] = normalize_projection(update.get("projection"))
             cfg = write_config(update)
             self.send_json({"ok": True, "config": cfg})
             return

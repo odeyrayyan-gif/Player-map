@@ -132,6 +132,15 @@
         <button id="saveCfgBtn">Save Config</button>
         <button id="testLiveBtn">Test Live</button>
       </div>
+      <div class="row">
+        <label class="small"><input id="flipX" type="checkbox" /> flipX</label>
+        <label class="small"><input id="flipY" type="checkbox" /> flipY</label>
+        <label class="small"><input id="swapXY" type="checkbox" /> swapXY</label>
+        <input id="scaleX" placeholder="scaleX (1.0)" style="max-width:120px" />
+        <input id="scaleY" placeholder="scaleY (1.0)" style="max-width:120px" />
+        <input id="offsetX" placeholder="offsetX (0)" style="max-width:120px" />
+        <input id="offsetY" placeholder="offsetY (0)" style="max-width:120px" />
+      </div>
     </div>
     <div class="card">
       <div class="row">
@@ -257,6 +266,7 @@
         cookie: $("cookie").value.trim(),
         poll_interval_ms: Number($("pollMs").value || 2000),
         map_bounds: mapBounds || {},
+        projection: getProjectionFromInputs(true),
       };
     }
 
@@ -312,6 +322,7 @@
       $("cookie").value = c.cookie || "";
       $("pollMs").value = c.poll_interval_ms || 2000;
       setMapBoundsInputs(c.map_bounds || null);
+      setProjectionInputs(c.projection || null);
     }
 
     async function saveConfig() {
@@ -343,6 +354,71 @@
       if (!events.length) return;
       state.events = [...events, ...state.events].slice(0, 60);
       $("events").innerHTML = state.events.map(e => `<div class="event">${e}</div>`).join("");
+    }
+
+    function setProjectionInputs(raw) {
+      const p = normalizeProjection(raw) || normalizeProjection({});
+      $("flipX").checked = Boolean(p.flip_x);
+      $("flipY").checked = Boolean(p.flip_y);
+      $("swapXY").checked = Boolean(p.swap_xy);
+      $("scaleX").value = String(p.scale_x);
+      $("scaleY").value = String(p.scale_y);
+      $("offsetX").value = String(p.offset_x);
+      $("offsetY").value = String(p.offset_y);
+    }
+
+    function normalizeProjection(raw) {
+      const input = (raw && typeof raw === "object") ? raw : {};
+      const scaleX = Number(input.scale_x ?? 1);
+      const scaleY = Number(input.scale_y ?? 1);
+      const offsetX = Number(input.offset_x ?? 0);
+      const offsetY = Number(input.offset_y ?? 0);
+      if (![scaleX, scaleY, offsetX, offsetY].every(Number.isFinite)) return null;
+      if (Math.abs(scaleX) < 1e-9 || Math.abs(scaleY) < 1e-9) return null;
+      return {
+        flip_x: Boolean(input.flip_x),
+        flip_y: Boolean(input.flip_y),
+        swap_xy: Boolean(input.swap_xy),
+        scale_x: scaleX,
+        scale_y: scaleY,
+        offset_x: offsetX,
+        offset_y: offsetY,
+      };
+    }
+
+    function getProjectionFromInputs(strict = false) {
+      const projection = normalizeProjection({
+        flip_x: $("flipX").checked,
+        flip_y: $("flipY").checked,
+        swap_xy: $("swapXY").checked,
+        scale_x: $("scaleX").value.trim() === "" ? 1 : $("scaleX").value,
+        scale_y: $("scaleY").value.trim() === "" ? 1 : $("scaleY").value,
+        offset_x: $("offsetX").value.trim() === "" ? 0 : $("offsetX").value,
+        offset_y: $("offsetY").value.trim() === "" ? 0 : $("offsetY").value,
+      });
+      if (!projection) {
+        if (strict) {
+          throw new Error("Projection invalid. Use finite scale/offset values and non-zero scales.");
+        }
+        return null;
+      }
+      return projection;
+    }
+
+    function projectWorld(rawPos, frame) {
+      if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
+      const p = normalizeProjection(frame.projection || null) || normalizeProjection({});
+      if (!p) return { x: rawPos.x, y: rawPos.y };
+      let x = rawPos.x;
+      let y = rawPos.y;
+      if (p.swap_xy) {
+        const t = x; x = y; y = t;
+      }
+      if (p.flip_x) x = -x;
+      if (p.flip_y) y = -y;
+      x = (x * p.scale_x) + p.offset_x;
+      y = (y * p.scale_y) + p.offset_y;
+      return { x, y };
     }
 
     function dedupe(values) {
@@ -469,14 +545,15 @@
       tryLoad(0);
     }
 
-    function detectBounds(players) {
+    function detectBounds(players, frame) {
       let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
       let n = 0;
       for (const p of players) {
         const w = p.world_position;
-        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
-        xMin = Math.min(xMin, w.x); xMax = Math.max(xMax, w.x);
-        yMin = Math.min(yMin, w.y); yMax = Math.max(yMax, w.y);
+        const wp = projectWorld(w, frame);
+        if (!wp) continue;
+        xMin = Math.min(xMin, wp.x); xMax = Math.max(xMax, wp.x);
+        yMin = Math.min(yMin, wp.y); yMax = Math.max(yMax, wp.y);
         n++;
       }
       if (n < 2) return null;
@@ -485,15 +562,16 @@
       return { xMin: xMin - xp, xMax: xMax + xp, yMin: yMin - yp, yMax: yMax + yp };
     }
 
-    function outOfBoundsRatio(bounds, players) {
+    function outOfBoundsRatio(bounds, players, frame) {
       if (!bounds) return 1;
       let valid = 0;
       let out = 0;
       for (const p of players || []) {
         const w = p.world_position;
-        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
+        const wp = projectWorld(w, frame);
+        if (!wp) continue;
         valid++;
-        if (w.x < bounds.xMin || w.x > bounds.xMax || w.y < bounds.yMin || w.y > bounds.yMax) {
+        if (wp.x < bounds.xMin || wp.x > bounds.xMax || wp.y < bounds.yMin || wp.y > bounds.yMax) {
           out++;
         }
       }
@@ -515,7 +593,7 @@
     function getRenderBounds(frame, players) {
       const explicit = normalizeBounds(frame.map_bounds || null);
       if (explicit) {
-        const ratio = outOfBoundsRatio(explicit, players);
+        const ratio = outOfBoundsRatio(explicit, players, frame);
         if (players.length < 5 || ratio <= 0.35) {
           return { ...explicit, source: frame.map_bounds_source || "configured" };
         }
@@ -524,7 +602,7 @@
       }
 
       const mapKey = String(frame.map_name || "UNKNOWN MAP").toUpperCase();
-      const sample = detectBounds(players);
+      const sample = detectBounds(players, frame);
       const cached = state.autoBoundsByMap[mapKey] || null;
       const merged = mergeBounds(cached, sample);
       if (merged) {
@@ -567,7 +645,13 @@
       const players = frame.players || [];
       const bounds = getRenderBounds(frame, players);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
-      $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()}`;
+      const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
+      const projFlags = [];
+      if (projection.flip_x) projFlags.push("flipX");
+      if (projection.flip_y) projFlags.push("flipY");
+      if (projection.swap_xy) projFlags.push("swapXY");
+      const projInfo = `proj:${projFlags.join("+") || "none"} sx:${projection.scale_x} sy:${projection.scale_y} ox:${projection.offset_x} oy:${projection.offset_y}`;
+      $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()} · ${projInfo}`;
 
       const canvas = $("mapCanvas");
       const rect = canvas.getBoundingClientRect();
@@ -603,9 +687,10 @@
 
       for (const p of players) {
         const w = p.world_position;
-        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
-        const x = viewport.x + project(w.x, bounds.xMin, bounds.xMax, viewport.w);
-        const y = viewport.y + project(w.y, bounds.yMin, bounds.yMax, viewport.h);
+        const wp = projectWorld(w, frame);
+        if (!wp) continue;
+        const x = viewport.x + project(wp.x, bounds.xMin, bounds.xMax, viewport.w);
+        const y = viewport.y + project(wp.y, bounds.yMin, bounds.yMax, viewport.h);
         const axis = String(p.team || "").toLowerCase().includes("axis");
         const color = axis ? "#ff5f5f" : "#58a6ff";
         ctx.beginPath();
