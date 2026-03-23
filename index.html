@@ -225,12 +225,12 @@
     const HLL_GRID_CELLS = 10;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
-      // St. Marie Du Mont (vertical playable strip):
-      // - rows C..H playable
-      // - cols 1..10 playable
-      smdm: { col_start: 1, col_end: 10, row_start: 3, row_end: 8 },
-      stmariedumont: { col_start: 1, col_end: 10, row_start: 3, row_end: 8 },
-      stmariedumont_day_webp: { col_start: 1, col_end: 10, row_start: 3, row_end: 8 },
+      // St. Marie Du Mont:
+      // - columns C..H playable (A/B and I/J are out)
+      // - rows 1..10 playable
+      smdm: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
+      stmariedumont: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
+      stmariedumont_day_webp: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
     };
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
