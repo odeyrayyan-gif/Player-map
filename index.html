@@ -217,17 +217,21 @@
       "allies",
     ]);
     // HLL-specific geometry assumptions:
-    // - playable area is square
+    // - world center is (0, 0)
+    // - map spans 10x10 grid cells
+    // - each grid cell is 20,000 world units
     // - map images can include gray border around playable area
     const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
     const HLL_USE_UNIFORM_SCALE = false;
-    const HLL_WORLD_MIN = -50000;
-    const HLL_WORLD_MAX = 50000;
+    const HLL_GRID_WORLD_SIZE = 20000;
+    const HLL_GRID_CELLS = 10;
+    const HLL_WORLD_HALF = (HLL_GRID_CELLS * HLL_GRID_WORLD_SIZE) / 2; // 100000
+    const HLL_WORLD_MIN = -HLL_WORLD_HALF;
+    const HLL_WORLD_MAX = HLL_WORLD_HALF;
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
     // Slight outward spread to account for icon-map mismatch and local clustering.
     // This behaves like a tiny "zoom out" of projected points around map center.
     const AUTO_CALIB_SPREAD_BOOST = 1.08;
-    const HLL_GRID_CELLS = 10;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
       // St. Marie Du Mont:
@@ -680,20 +684,13 @@
 
     function estimateHllTargetBounds(points) {
       if (!points || points.length < 12) return null;
-      const xs = points.map(p => p.x);
-      const ys = points.map(p => p.y);
-      const cx = median(xs);
-      const cy = median(ys);
-      if (![cx, cy].every(Number.isFinite)) return null;
-
-      // HLL playable world is effectively square. Use fixed span to avoid
-      // "player cloud bounds" drift when teams cluster.
-      const half = 100000;
+      // Use fixed world extents anchored at origin to avoid calibration drift
+      // from local player clustering.
       return {
-        xMin: cx - half,
-        xMax: cx + half,
-        yMin: cy - half,
-        yMax: cy + half,
+        xMin: HLL_WORLD_MIN,
+        xMax: HLL_WORLD_MAX,
+        yMin: HLL_WORLD_MIN,
+        yMax: HLL_WORLD_MAX,
       };
     }
 
@@ -1040,15 +1037,14 @@
         setStatus(`Configured/API bounds look invalid (${Math.round(ratio * 100)}% out of bounds). Using auto bounds.`);
       }
 
-      const mapKey = String(frame.map_name || "UNKNOWN MAP").toUpperCase();
-      const sample = detectBounds(players, frame);
-      const cached = state.autoBoundsByMap[mapKey] || null;
-      const merged = mergeBounds(cached, sample);
-      if (merged) {
-        state.autoBoundsByMap[mapKey] = merged;
-        return { ...merged, source: "auto" };
-      }
-      return null;
+      // Fixed HLL world bounds: center at 0,0 with 20000 units per grid cell.
+      return {
+        xMin: HLL_WORLD_MIN,
+        xMax: HLL_WORLD_MAX,
+        yMin: HLL_WORLD_MIN,
+        yMax: HLL_WORLD_MAX,
+        source: "hll-fixed",
+      };
     }
 
     function getMapViewport(canvas, bounds) {
