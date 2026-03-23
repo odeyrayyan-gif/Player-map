@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HLL Player Map App</title>
+  <style>
+    :root {
+      --bg: #0b1118;
+      --panel: #101a24;
+      --line: #223042;
+      --text: #dbe4f0;
+      --muted: #8ea2bb;
+      --accent: #5ac8fa;
+      --warn: #ffb347;
+      --red: #ff5f5f;
+      --blue: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .top {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      background: #0e151f;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .row:last-child { margin-bottom: 0; }
+    input, select, button {
+      background: #0a1018;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    input { flex: 1; min-width: 0; }
+    button { cursor: pointer; }
+    .small { font-size: 12px; color: var(--muted); }
+    .status { font-size: 12px; color: var(--warn); }
+
+    .main {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+      padding: 12px;
+      height: calc(100vh - 178px);
+    }
+    .map-wrap {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+    .map-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0b121b;
+      min-height: 0;
+    }
+    .right {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 12px;
+      min-height: 0;
+    }
+    .hover-box .name { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+    .hover-box .meta { font-size: 12px; color: var(--muted); }
+    .events, .roster { overflow: auto; min-height: 0; max-height: 100%; }
+    .event { font-size: 12px; padding: 4px 0; border-bottom: 1px solid #1a2533; }
+    .event:last-child { border-bottom: 0; }
+    .roster-item {
+      font-size: 12px;
+      padding: 5px 0;
+      border-bottom: 1px solid #1a2533;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .tag { font-size: 11px; color: var(--muted); }
+    .team-allies { color: var(--blue); }
+    .team-axis { color: var(--red); }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="card">
+      <div class="row">
+        <input id="liveStatsUrl" placeholder="Live stats URL (optional if team view URL provided)" />
+      </div>
+      <div class="row">
+        <input id="teamViewUrl" placeholder="Team view URL (required)" />
+      </div>
+      <div class="row">
+        <input id="gamestateUrl" placeholder="Gamestate URL (optional)" />
+      </div>
+      <div class="row">
+        <input id="cookie" placeholder="Cookie header value (for closed endpoints)" />
+      </div>
+      <div class="row">
+        <input id="pollMs" placeholder="Poll interval ms (e.g. 2000)" style="max-width:180px" />
+        <button id="saveCfgBtn">Save Config</button>
+        <button id="testLiveBtn">Test Live</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <button id="liveModeBtn">Live Mode</button>
+        <button id="replayModeBtn">Replay Mode</button>
+        <span class="small" id="modeLabel">Mode: LIVE</span>
+      </div>
+      <div class="row">
+        <button id="startRecBtn">Start Recording</button>
+        <button id="stopRecBtn">Stop Recording</button>
+        <span class="small" id="recStatus">Recording: OFF</span>
+      </div>
+      <div class="row">
+        <select id="replaySelect" style="flex:1"></select>
+        <button id="loadReplayBtn">Load Replay</button>
+      </div>
+      <div class="row">
+        <button id="playBtn">Play</button>
+        <button id="pauseBtn">Pause</button>
+        <input id="timeline" type="range" min="0" max="0" value="0" />
+      </div>
+      <div class="status" id="status">Ready.</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="map-wrap">
+      <div class="map-head">
+        <div id="mapName">UNKNOWN MAP</div>
+        <div id="frameInfo">No frame loaded</div>
+      </div>
+      <canvas id="mapCanvas"></canvas>
+    </div>
+    <div class="right">
+      <div class="card hover-box">
+        <div class="name" id="hoverName">Hover a player dot</div>
+        <div class="meta" id="hoverMeta">Role / Team / Squad / K:D</div>
+      </div>
+      <div class="card events">
+        <div class="tag">Recent actions</div>
+        <div id="events"></div>
+      </div>
+      <div class="card roster">
+        <div class="tag">Players this frame</div>
+        <div id="roster"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      mode: "live",
+      liveTimer: null,
+      replayTimer: null,
+      frame: null,
+      replayFrames: [],
+      replayIndex: 0,
+      projected: [],
+      events: [],
+      lastFrame: null,
+    };
+
+    async function api(path, options = {}) {
+      const r = await fetch(path, options);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+      return j;
+    }
+
+    function setStatus(msg) { $("status").textContent = msg; }
+
+    function getCfgFromInputs() {
+      return {
+        live_stats_url: $("liveStatsUrl").value.trim(),
+        team_view_url: $("teamViewUrl").value.trim(),
+        gamestate_url: $("gamestateUrl").value.trim(),
+        cookie: $("cookie").value.trim(),
+        poll_interval_ms: Number($("pollMs").value || 2000),
+      };
+    }
+
+    async function loadConfig() {
+      const j = await api("/api/config");
+      const c = j.config || {};
+      $("liveStatsUrl").value = c.live_stats_url || "";
+      $("teamViewUrl").value = c.team_view_url || "";
+      $("gamestateUrl").value = c.gamestate_url || "";
+      $("cookie").value = c.cookie || "";
+      $("pollMs").value = c.poll_interval_ms || 2000;
+    }
+
+    async function saveConfig() {
+      const cfg = getCfgFromInputs();
+      await api("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+      });
+      setStatus("Config saved.");
+    }
+
+    function diffEvents(prevFrame, currFrame) {
+      if (!prevFrame || !currFrame) return [];
+      const prev = new Map((prevFrame.players || []).map(p => [p.name, p]));
+      const events = [];
+      for (const p of (currFrame.players || [])) {
+        const old = prev.get(p.name);
+        if (!old) continue;
+        const dk = Number(p.kills || 0) - Number(old.kills || 0);
+        const dd = Number(p.deaths || 0) - Number(old.deaths || 0);
+        if (dk > 0) events.push(`${p.name} +${dk} kills`);
+        if (dd > 0) events.push(`${p.name} died ${dd}x`);
+      }
+      return events;
+    }
+
+    function addEvents(events) {
+      if (!events.length) return;
+      state.events = [...events, ...state.events].slice(0, 60);
+      $("events").innerHTML = state.events.map(e => `<div class="event">${e}</div>`).join("");
+    }
+
+    function detectBounds(players) {
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      let n = 0;
+      for (const p of players) {
+        const w = p.world_position;
+        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
+        xMin = Math.min(xMin, w.x); xMax = Math.max(xMax, w.x);
+        yMin = Math.min(yMin, w.y); yMax = Math.max(yMax, w.y);
+        n++;
+      }
+      if (n < 2) return null;
+      const xp = (xMax - xMin) * 0.1 || 100;
+      const yp = (yMax - yMin) * 0.1 || 100;
+      return { xMin: xMin - xp, xMax: xMax + xp, yMin: yMin - yp, yMax: yMax + yp };
+    }
+
+    function project(v, min, max, size) {
+      if (max === min) return size / 2;
+      return ((v - min) / (max - min)) * size;
+    }
+
+    function drawFrame(frame) {
+      state.frame = frame;
+      $("mapName").textContent = frame.map_name || "UNKNOWN MAP";
+      const ts = frame.ts_iso ? new Date(frame.ts_iso).toLocaleTimeString() : "n/a";
+      $("frameInfo").textContent = `${(frame.players || []).length} players · ${ts}`;
+
+      const canvas = $("mapCanvas");
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.max(600, Math.floor(rect.width));
+      canvas.height = Math.max(400, Math.floor(rect.height));
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // grid
+      ctx.strokeStyle = "rgba(255,255,255,0.07)";
+      for (let x = 0; x < canvas.width; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+      for (let y = 0; y < canvas.height; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+
+      const players = frame.players || [];
+      const bounds = detectBounds(players);
+      state.projected = [];
+      if (!bounds) {
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.font = "14px Arial";
+        ctx.fillText("No world_position data in this frame.", 16, 24);
+        return;
+      }
+
+      for (const p of players) {
+        const w = p.world_position;
+        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
+        const x = project(w.x, bounds.xMin, bounds.xMax, canvas.width);
+        const y = project(w.y, bounds.yMin, bounds.yMax, canvas.height);
+        const axis = String(p.team || "").toLowerCase().includes("axis");
+        const color = axis ? "#ff5f5f" : "#58a6ff";
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        state.projected.push({ x, y, p });
+      }
+    }
+
+    function renderRoster(frame) {
+      const players = [...(frame.players || [])].sort((a, b) => (Number(b.kills || 0) - Number(a.kills || 0)));
+      $("roster").innerHTML = players.map(p => {
+        const teamClass = String(p.team || "").toLowerCase().includes("axis") ? "team-axis" : "team-allies";
+        return `<div class="roster-item">
+          <span class="${teamClass}">${p.name || "Unknown"} <span class="tag">(${p.role || "role?"})</span></span>
+          <span class="tag">${p.kills || 0} / ${p.deaths || 0}</span>
+        </div>`;
+      }).join("");
+    }
+
+    function applyFrame(frame, prevOverride = null) {
+      const prev = prevOverride !== null ? prevOverride : state.lastFrame;
+      addEvents(diffEvents(prev, frame));
+      drawFrame(frame);
+      renderRoster(frame);
+      state.lastFrame = frame;
+    }
+
+    async function pollLive() {
+      try {
+        const j = await api("/api/live");
+        applyFrame(j.frame);
+      } catch (e) {
+        setStatus(`Live error: ${e.message}`);
+      }
+    }
+
+    function stopLiveLoop() {
+      if (state.liveTimer) clearInterval(state.liveTimer);
+      state.liveTimer = null;
+    }
+
+    function startLiveLoop() {
+      stopLiveLoop();
+      const ms = Math.max(500, Number($("pollMs").value || 2000));
+      state.liveTimer = setInterval(pollLive, ms);
+    }
+
+    async function refreshReplays() {
+      const j = await api("/api/replays");
+      const sel = $("replaySelect");
+      const list = j.replays || [];
+      sel.innerHTML = list.length
+        ? list.map(r => `<option value="${r.id}">${r.id} (${r.frames} frames)</option>`).join("")
+        : `<option value="">No recordings yet</option>`;
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      $("modeLabel").textContent = `Mode: ${mode.toUpperCase()}`;
+      if (mode === "live") {
+        if (state.replayTimer) clearInterval(state.replayTimer);
+        state.replayTimer = null;
+        startLiveLoop();
+      } else {
+        stopLiveLoop();
+      }
+    }
+
+    async function loadReplay() {
+      const id = $("replaySelect").value;
+      if (!id) return;
+      const j = await api(`/api/replay?id=${encodeURIComponent(id)}`);
+      state.replayFrames = j.frames || [];
+      state.replayIndex = 0;
+      $("timeline").max = Math.max(0, state.replayFrames.length - 1);
+      $("timeline").value = 0;
+      state.events = [];
+      if (state.replayFrames.length) applyFrame(state.replayFrames[0], null);
+      setMode("replay");
+      setStatus(`Replay loaded: ${id}`);
+    }
+
+    function showReplayIndex(i) {
+      if (!state.replayFrames.length) return;
+      const idx = Math.max(0, Math.min(state.replayFrames.length - 1, i));
+      state.replayIndex = idx;
+      $("timeline").value = idx;
+      const prev = idx > 0 ? state.replayFrames[idx - 1] : null;
+      applyFrame(state.replayFrames[idx], prev);
+    }
+
+    function playReplay() {
+      if (!state.replayFrames.length) return;
+      if (state.replayTimer) clearInterval(state.replayTimer);
+      state.replayTimer = setInterval(() => {
+        const next = state.replayIndex + 1;
+        if (next >= state.replayFrames.length) {
+          clearInterval(state.replayTimer);
+          state.replayTimer = null;
+          return;
+        }
+        showReplayIndex(next);
+      }, 500);
+    }
+
+    function pauseReplay() {
+      if (state.replayTimer) clearInterval(state.replayTimer);
+      state.replayTimer = null;
+    }
+
+    function bindCanvasHover() {
+      const canvas = $("mapCanvas");
+      canvas.addEventListener("mousemove", (ev) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = ev.clientX - rect.left;
+        const my = ev.clientY - rect.top;
+        let best = null;
+        let bestDist = 9999;
+        for (const node of state.projected) {
+          const dx = node.x - mx;
+          const dy = node.y - my;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < bestDist) { bestDist = d; best = node; }
+        }
+        if (!best || bestDist > 12) {
+          $("hoverName").textContent = "Hover a player dot";
+          $("hoverMeta").textContent = "Role / Team / Squad / K:D";
+          return;
+        }
+        const p = best.p;
+        $("hoverName").textContent = p.name || "Unknown";
+        $("hoverMeta").textContent = `${p.role || "role?"} · ${p.team || "team?"} · ${p.squad || "squad?"} · K:${p.kills || 0} D:${p.deaths || 0}`;
+      });
+    }
+
+    async function init() {
+      bindCanvasHover();
+      $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
+      $("testLiveBtn").onclick = async () => { try { await pollLive(); setStatus("Live fetch OK."); } catch (e) { setStatus(e.message); } };
+      $("startRecBtn").onclick = async () => {
+        try {
+          const j = await api("/api/record/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+          $("recStatus").textContent = `Recording: ON (${j.id})`;
+          await refreshReplays();
+        } catch (e) { setStatus(e.message); }
+      };
+      $("stopRecBtn").onclick = async () => {
+        try {
+          await api("/api/record/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+          $("recStatus").textContent = "Recording: OFF";
+          await refreshReplays();
+        } catch (e) { setStatus(e.message); }
+      };
+      $("liveModeBtn").onclick = () => setMode("live");
+      $("replayModeBtn").onclick = () => setMode("replay");
+      $("loadReplayBtn").onclick = async () => { try { await loadReplay(); } catch (e) { setStatus(e.message); } };
+      $("playBtn").onclick = playReplay;
+      $("pauseBtn").onclick = pauseReplay;
+      $("timeline").oninput = (e) => showReplayIndex(Number(e.target.value));
+
+      await loadConfig();
+      await refreshReplays();
+      setMode("live");
+      pollLive();
+    }
+
+    init().catch(e => setStatus(e.message));
+  </script>
+</body>
+</html>
