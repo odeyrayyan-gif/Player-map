@@ -231,7 +231,11 @@
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
     // Slight outward spread to account for icon-map mismatch and local clustering.
     // This behaves like a tiny "zoom out" of projected points around map center.
-    const AUTO_CALIB_SPREAD_BOOST = 1.08;
+    const AUTO_CALIB_SPREAD_BOOST = 1.04;
+    const AUTO_CALIB_SCALE_MIN = 0.75;
+    const AUTO_CALIB_SCALE_MAX = 1.45;
+    const AUTO_CALIB_MAX_OFFSET_RATIO = 0.18;
+    const AUTO_CALIB_MAX_SCALE_RATIO = 1.35;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
       // St. Marie Du Mont:
@@ -589,6 +593,23 @@
       return { x: inset, y: inset, w: size, h: size };
     }
 
+    function worldBoundsFromPlayableRect(rect) {
+      if (!rect || typeof rect !== "object") return null;
+      const x = Number(rect.x);
+      const y = Number(rect.y);
+      const w = Number(rect.w);
+      const h = Number(rect.h);
+      if (![x, y, w, h].every(Number.isFinite)) return null;
+      if (w <= 0 || h <= 0) return null;
+      const xMin = HLL_WORLD_MIN + (x * HLL_WORLD_SIZE);
+      const xMax = HLL_WORLD_MIN + ((x + w) * HLL_WORLD_SIZE);
+      const yMin = HLL_WORLD_MIN + (y * HLL_WORLD_SIZE);
+      const yMax = HLL_WORLD_MIN + ((y + h) * HLL_WORLD_SIZE);
+      if (![xMin, xMax, yMin, yMax].every(Number.isFinite)) return null;
+      if (xMax <= xMin || yMax <= yMin) return null;
+      return { xMin, xMax, yMin, yMax };
+    }
+
     function estimateStripPlayableRectFromPoints(frame) {
       const points = collectCalibrationPoints(frame);
       if (!points || points.length < 24) return null;
@@ -682,10 +703,19 @@
       return (sorted[mid - 1] + sorted[mid]) / 2;
     }
 
-    function estimateHllTargetBounds(points) {
+    function estimateHllTargetBounds(frame, points) {
+      // Prefer map preset playable cells when available.
+      const presetRect = getMapPlayableRectPreset(frame);
+      const presetBounds = worldBoundsFromPlayableRect(presetRect);
+      if (presetBounds) return presetBounds;
+
+      // Otherwise infer strip orientation from sample spread.
+      const stripPlayable = estimateStripPlayableRectFromPoints(frame);
+      const stripBounds = worldBoundsFromPlayableRect(stripPlayable?.rect || null);
+      if (stripBounds) return stripBounds;
+
       if (!points || points.length < 12) return null;
-      // Use fixed world extents anchored at origin to avoid calibration drift
-      // from local player clustering.
+      // Fallback: full 10x10 world extents anchored at origin.
       return {
         xMin: HLL_WORLD_MIN,
         xMax: HLL_WORLD_MAX,
@@ -699,9 +729,10 @@
       if (points.length < 18) return null;
 
       const explicitBounds = normalizeBounds(frame.map_bounds || null) || getMapBoundsFromInputs(false);
-      const hllTarget = estimateHllTargetBounds(points);
+      const hllTarget = estimateHllTargetBounds(frame, points);
       const target = explicitBounds || hllTarget || detectBounds(points.map(p => ({ world_position: p })), { projection: normalizeProjection({}) });
       if (!target) return null;
+      const usingHllTarget = !explicitBounds && Boolean(hllTarget);
 
       const candidates = [
         { flip_x: false, flip_y: true, swap_xy: false }, // Typical map image Y-axis inversion.
@@ -744,12 +775,31 @@
           scaleX = uni;
           scaleY = uni;
         }
+        if (usingHllTarget) {
+          // Keep auto-calib from overfitting to local player clusters.
+          const ratio = Math.abs(scaleX / scaleY);
+          if (Number.isFinite(ratio) && ratio > AUTO_CALIB_MAX_SCALE_RATIO) {
+            const uni = Math.sqrt(Math.abs(scaleX * scaleY));
+            scaleX = uni;
+            scaleY = uni;
+          }
+          scaleX = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleX));
+          scaleY = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleY));
+        }
+        let offsetX = target.xMin - (xLo * scaleX);
+        let offsetY = target.yMin - (yLo * scaleY);
+        if (usingHllTarget) {
+          const maxOx = txRange * AUTO_CALIB_MAX_OFFSET_RATIO;
+          const maxOy = tyRange * AUTO_CALIB_MAX_OFFSET_RATIO;
+          offsetX = Math.max(-maxOx, Math.min(maxOx, offsetX));
+          offsetY = Math.max(-maxOy, Math.min(maxOy, offsetY));
+        }
         let proj = normalizeProjection({
           ...c,
           scale_x: scaleX,
           scale_y: scaleY,
-          offset_x: target.xMin - (xLo * scaleX),
-          offset_y: target.yMin - (yLo * scaleY),
+          offset_x: offsetX,
+          offset_y: offsetY,
         });
         if (!proj) continue;
 
@@ -790,7 +840,12 @@
 
         // Prefer high in-bounds fits, centered cloud, and less axis distortion.
         // Allow some anisotropy because some map textures/projections are not perfectly square-scaled.
+        const scaleErr = Math.abs(Math.log(Math.abs(proj.scale_x))) + Math.abs(Math.log(Math.abs(proj.scale_y)));
+        const offsetErr = Math.sqrt((proj.offset_x / txRange) ** 2 + (proj.offset_y / tyRange) ** 2);
         let score = (inRatio * 5.0) - (centerErr * 1.2) - (anisotropy * 0.08);
+        if (usingHllTarget) {
+          score -= (scaleErr * 1.25) + (offsetErr * 1.6);
+        }
         if (c.flip_y) score += 0.05;
         if (c.swap_xy) score -= 0.03;
 
