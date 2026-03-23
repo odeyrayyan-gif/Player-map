@@ -93,26 +93,44 @@ def endpoint_looks_like(endpoint, targets):
 def build_api_variant_url(endpoint, target_name):
     try:
         parsed = urllib.parse.urlparse(endpoint)
-        parts = parsed.path.split("/")
+        raw_parts = [p for p in parsed.path.split("/") if p]
+        parts = list(raw_parts)
         target = str(target_name or "").lstrip("/").lower()
         idx = next((i for i, p in enumerate(parts) if p.lower() == "get_live_game_stats"), -1)
         if idx >= 0:
             parts[idx] = target
-        elif len(parts) > 1:
+        elif len(parts) >= 1:
             parts[-1] = target
         else:
             return ""
-        new_path = "/".join(parts)
+        new_path = "/" + "/".join(parts)
         return urllib.parse.urlunparse(parsed._replace(path=new_path))
+    except Exception:
+        return ""
+
+
+def add_trailing_slash_variant(url):
+    try:
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path or "/"
+        alt_path = path[:-1] if path.endswith("/") else f"{path}/"
+        if alt_path == path:
+            return ""
+        return urllib.parse.urlunparse(parsed._replace(path=alt_path))
     except Exception:
         return ""
 
 
 def build_variant_candidates(endpoint_seed, targets):
     variants = [build_api_variant_url(endpoint_seed, t) for t in targets]
-    if endpoint_looks_like(endpoint_seed, targets):
-        return dedupe_keep_order([endpoint_seed] + variants)
-    return dedupe_keep_order(variants)
+    base = [endpoint_seed] + variants if endpoint_seed else variants
+    expanded = []
+    for candidate in base:
+        if not candidate:
+            continue
+        expanded.append(candidate)
+        expanded.append(add_trailing_slash_variant(candidate))
+    return dedupe_keep_order(expanded)
 
 
 def fetch_json_url(url, cookie_header):
@@ -128,19 +146,21 @@ def fetch_json_url(url, cookie_header):
 
 
 def fetch_first_ok_json(url_candidates, cookie_header):
-    last_error = "no candidate url"
+    failures = []
     for raw in url_candidates:
         if not raw:
             continue
         try:
             return fetch_json_url(raw, cookie_header)
         except urllib.error.HTTPError as e:
-            last_error = f"HTTP {e.code} ({raw})"
+            failures.append(f"HTTP {e.code} ({raw})")
         except urllib.error.URLError as e:
-            last_error = f"{e.reason} ({raw})"
+            failures.append(f"{e.reason} ({raw})")
         except Exception as e:
-            last_error = f"{str(e)} ({raw})"
-    raise RuntimeError(last_error)
+            failures.append(f"{str(e)} ({raw})")
+    if not failures:
+        raise RuntimeError("no candidate url")
+    raise RuntimeError("; ".join(failures[:8]))
 
 
 def normalize_map_key(value):
