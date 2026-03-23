@@ -348,27 +348,37 @@ def flatten_players(allied_data, axis_data):
 
 def build_frame(cfg):
     cookie = (cfg.get("cookie") or "").strip()
-    seeds = dedupe_keep_order(
-        [cfg.get("team_view_url"), cfg.get("gamestate_url"), cfg.get("live_stats_url")]
-    )
-    if not seeds:
+    team_view_url = (cfg.get("team_view_url") or "").strip()
+    gamestate_url = (cfg.get("gamestate_url") or "").strip()
+    live_stats_url = (cfg.get("live_stats_url") or "").strip()
+
+    seeds = dedupe_keep_order([team_view_url, gamestate_url, live_stats_url])
+    if not any(seeds):
         raise RuntimeError("NO_ENDPOINT_CONFIGURED")
 
     team_targets = ["get_team_view", "get_teamview", "team_view"]
-    tv_candidates = []
-    for seed in seeds:
-        tv_candidates.extend(build_variant_candidates(seed, team_targets))
-    tv_candidates = dedupe_keep_order(tv_candidates)
+    if team_view_url:
+        # If the user explicitly provided team_view_url, honor it exactly.
+        tv_candidates = dedupe_keep_order([team_view_url, add_trailing_slash_variant(team_view_url)])
+    else:
+        tv_candidates = []
+        for seed in seeds:
+            tv_candidates.extend(build_variant_candidates(seed, team_targets))
+        tv_candidates = dedupe_keep_order(tv_candidates)
     tv_data = fetch_first_ok_json(tv_candidates, cookie)
 
     allied_data, axis_data = extract_teams(tv_data)
     players = flatten_players(allied_data, axis_data)
 
     game_targets = ["get_gamestate", "get_game_state", "gamestate"]
-    gs_candidates = []
-    for seed in seeds:
-        gs_candidates.extend(build_variant_candidates(seed, game_targets))
-    gs_candidates = dedupe_keep_order(gs_candidates)
+    if gamestate_url:
+        # If the user explicitly provided gamestate_url, honor it exactly.
+        gs_candidates = dedupe_keep_order([gamestate_url, add_trailing_slash_variant(gamestate_url)])
+    else:
+        gs_candidates = []
+        for seed in seeds:
+            gs_candidates.extend(build_variant_candidates(seed, game_targets))
+        gs_candidates = dedupe_keep_order(gs_candidates)
 
     tv_meta = extract_map_meta(tv_data)
     map_name = tv_meta["map_name"]
