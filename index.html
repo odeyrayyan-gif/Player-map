@@ -204,6 +204,26 @@
       "axis",
       "allies",
     ]);
+    const MAP_SLUG_ALIASES = {
+      utahbeach: "utah",
+      utah_beach: "utah",
+      omahabeach: "omaha",
+      omaha_beach: "omaha",
+      stmereeglise: "sme",
+      st_mere_eglise: "sme",
+      saintemereeglise: "sme",
+      sainte_mere_eglise: "sme",
+      stmariedumont: "smdm",
+      st_marie_du_mont: "smdm",
+      saintemariedumont: "smdm",
+      sainte_marie_du_mont: "smdm",
+      purpleheartlane: "phl",
+      purple_heart_lane: "phl",
+      hurtgenforest: "hurtgen",
+      hurtgen_forest: "hurtgen",
+      elalamein: "el_alamein",
+      elsenbornridge: "elsenborn_ridge",
+    };
     const state = {
       mode: "live",
       liveTimer: null,
@@ -345,12 +365,32 @@
       return parts.join("_");
     }
 
+    function withNoUnderscoreVariant(slug) {
+      const norm = normalizeMapSlug(slug);
+      if (!norm) return [];
+      const plain = norm.replace(/_/g, "");
+      if (!plain || plain === norm) return [norm];
+      return [norm, plain];
+    }
+
+    function expandAliasSlugs(slugs) {
+      const out = [];
+      for (const raw of slugs || []) {
+        for (const variant of withNoUnderscoreVariant(raw)) {
+          out.push(variant);
+          const alias = MAP_SLUG_ALIASES[variant];
+          if (alias) out.push(alias);
+        }
+      }
+      return dedupe(out);
+    }
+
     function getMapSlugCandidates(frame) {
       const byImage = normalizeMapSlug(frame.map_image_name);
       const byShort = normalizeMapSlug(frame.map_shortname);
       const byName = normalizeMapSlug(frame.map_name);
       const trimmedName = trimLayerWordsFromSlug(frame.map_name);
-      return dedupe([byImage, byShort, trimmedName, byName]);
+      return expandAliasSlugs([byImage, byShort, trimmedName, byName]);
     }
 
     function getMapVisualPathCandidates(frame) {
