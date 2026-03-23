@@ -136,6 +136,8 @@
         <label class="small"><input id="flipX" type="checkbox" /> flipX</label>
         <label class="small"><input id="flipY" type="checkbox" /> flipY</label>
         <label class="small"><input id="swapXY" type="checkbox" /> swapXY</label>
+        <label class="small"><input id="flipMapX" type="checkbox" /> flipMapX</label>
+        <label class="small"><input id="flipMapY" type="checkbox" /> flipMapY</label>
         <input id="scaleX" placeholder="scaleX (1.0)" style="max-width:120px" />
         <input id="scaleY" placeholder="scaleY (1.0)" style="max-width:120px" />
         <input id="offsetX" placeholder="offsetX (0)" style="max-width:120px" />
@@ -218,7 +220,7 @@
     // - playable area is square
     // - map images can include gray border around playable area
     const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
-    const HLL_USE_UNIFORM_SCALE = true;
+    const HLL_USE_UNIFORM_SCALE = false;
     const HLL_WORLD_MIN = -50000;
     const HLL_WORLD_MAX = 50000;
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
@@ -287,6 +289,7 @@
         poll_interval_ms: Number($("pollMs").value || 2000),
         map_bounds: mapBounds || {},
         projection: getProjectionFromInputs(true),
+        map_view: getMapViewFromInputs(),
       };
     }
 
@@ -343,6 +346,7 @@
       $("pollMs").value = c.poll_interval_ms || 2000;
       setMapBoundsInputs(c.map_bounds || null);
       setProjectionInputs(c.projection || null);
+      setMapViewInputs(c.map_view || null);
     }
 
     async function saveConfig() {
@@ -385,6 +389,27 @@
       $("scaleY").value = String(p.scale_y);
       $("offsetX").value = String(p.offset_x);
       $("offsetY").value = String(p.offset_y);
+    }
+
+    function normalizeMapView(raw) {
+      const r = (raw && typeof raw === "object") ? raw : {};
+      return {
+        flip_x: Boolean(r.flip_x),
+        flip_y: Boolean(r.flip_y),
+      };
+    }
+
+    function setMapViewInputs(raw) {
+      const mv = normalizeMapView(raw);
+      $("flipMapX").checked = mv.flip_x;
+      $("flipMapY").checked = mv.flip_y;
+    }
+
+    function getMapViewFromInputs() {
+      return {
+        flip_x: $("flipMapX").checked,
+        flip_y: $("flipMapY").checked,
+      };
     }
 
     function normalizeProjection(raw) {
@@ -748,7 +773,8 @@
         const anisotropy = Math.abs(Math.log(Math.abs(proj.scale_x / proj.scale_y)));
 
         // Prefer high in-bounds fits, centered cloud, and less axis distortion.
-        let score = (inRatio * 5.0) - (centerErr * 1.2) - (anisotropy * 0.25);
+        // Allow some anisotropy because some map textures/projections are not perfectly square-scaled.
+        let score = (inRatio * 5.0) - (centerErr * 1.2) - (anisotropy * 0.08);
         if (c.flip_y) score += 0.05;
         if (c.swap_xy) score -= 0.03;
 
@@ -1050,11 +1076,15 @@
       const bounds = getRenderBounds(frame, players);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
       const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
+      const mapView = normalizeMapView(frame.map_view || null);
       const projFlags = [];
       if (projection.flip_x) projFlags.push("flipX");
       if (projection.flip_y) projFlags.push("flipY");
       if (projection.swap_xy) projFlags.push("swapXY");
-      const projInfo = `proj:${projFlags.join("+") || "none"} sx:${projection.scale_x} sy:${projection.scale_y} ox:${projection.offset_x} oy:${projection.offset_y}`;
+      const mapViewFlags = [];
+      if (mapView.flip_x) mapViewFlags.push("mapFlipX");
+      if (mapView.flip_y) mapViewFlags.push("mapFlipY");
+      const projInfo = `proj:${projFlags.join("+") || "none"} sx:${projection.scale_x} sy:${projection.scale_y} ox:${projection.offset_x} oy:${projection.offset_y} view:${mapViewFlags.join("+") || "none"}`;
       $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()} · ${projInfo}`;
 
       const canvas = $("mapCanvas");
@@ -1068,6 +1098,16 @@
 
       if (state.mapVisual.status === "ready" && state.mapVisual.img) {
         ctx.save();
+        if (mapView.flip_x || mapView.flip_y) {
+          if (mapView.flip_x) {
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+          }
+          if (mapView.flip_y) {
+            ctx.translate(0, canvas.height);
+            ctx.scale(1, -1);
+          }
+        }
         ctx.globalAlpha = 0.55;
         ctx.drawImage(state.mapVisual.img, viewport.x, viewport.y, viewport.w, viewport.h);
         ctx.restore();

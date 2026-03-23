@@ -35,6 +35,10 @@ DEFAULT_CONFIG = {
         "offset_x": 0.0,
         "offset_y": 0.0,
     },
+    "map_view": {
+        "flip_x": False,
+        "flip_y": False,
+    },
 }
 
 STATE_LOCK = threading.Lock()
@@ -292,6 +296,16 @@ def normalize_projection(raw):
     return out
 
 
+def normalize_map_view(raw):
+    base = {"flip_x": False, "flip_y": False}
+    if not isinstance(raw, dict):
+        return dict(base)
+    return {
+        "flip_x": bool(raw.get("flip_x", base["flip_x"])),
+        "flip_y": bool(raw.get("flip_y", base["flip_y"])),
+    }
+
+
 def extract_map_bounds(payload):
     result = payload.get("result", payload) if isinstance(payload, dict) else {}
     if not isinstance(result, dict):
@@ -429,6 +443,7 @@ def build_frame(cfg):
     map_bounds = normalize_bounds(cfg.get("map_bounds")) or None
     map_bounds_source = "config" if map_bounds else "auto"
     projection = normalize_projection(cfg.get("projection"))
+    map_view = normalize_map_view(cfg.get("map_view"))
 
     if not map_bounds:
         tv_bounds = extract_map_bounds(tv_data)
@@ -465,6 +480,7 @@ def build_frame(cfg):
         "map_bounds": map_bounds,
         "map_bounds_source": map_bounds_source,
         "projection": projection,
+        "map_view": map_view,
         "allied": allied_data,
         "axis": axis_data,
         "players": players,
@@ -627,12 +643,15 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
                 "poll_interval_ms",
                 "map_bounds",
                 "projection",
+                "map_view",
             }
             update = {k: v for k, v in data.items() if k in allowed}
             if "map_bounds" in update:
                 update["map_bounds"] = normalize_bounds(update.get("map_bounds")) or {}
             if "projection" in update:
                 update["projection"] = normalize_projection(update.get("projection"))
+            if "map_view" in update:
+                update["map_view"] = normalize_map_view(update.get("map_view"))
             cfg = write_config(update)
             self.send_json({"ok": True, "config": cfg})
             return
