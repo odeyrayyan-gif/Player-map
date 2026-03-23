@@ -140,6 +140,7 @@
         <input id="scaleY" placeholder="scaleY (1.0)" style="max-width:120px" />
         <input id="offsetX" placeholder="offsetX (0)" style="max-width:120px" />
         <input id="offsetY" placeholder="offsetY (0)" style="max-width:120px" />
+        <button id="autoCalibBtn">Auto Calibrate</button>
       </div>
     </div>
     <div class="card">
@@ -213,6 +214,11 @@
       "axis",
       "allies",
     ]);
+    // HLL-specific geometry assumptions:
+    // - playable area is square
+    // - map images can include gray border around playable area
+    const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
+    const HLL_USE_UNIFORM_SCALE = true;
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
       utah_beach: "utah",
@@ -244,7 +250,7 @@
       events: [],
       lastFrame: null,
       autoBoundsByMap: {},
-      mapVisual: { key: "", status: "idle", img: null, src: "" },
+      mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
       mapVisualCache: {},
     };
 
@@ -421,6 +427,209 @@
       return { x, y };
     }
 
+    function projectWorldWithProjection(rawPos, projection) {
+      if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
+      const p = normalizeProjection(projection || null) || normalizeProjection({});
+      if (!p) return { x: rawPos.x, y: rawPos.y };
+      let x = rawPos.x;
+      let y = rawPos.y;
+      if (p.swap_xy) {
+        const t = x; x = y; y = t;
+      }
+      if (p.flip_x) x = -x;
+      if (p.flip_y) y = -y;
+      x = (x * p.scale_x) + p.offset_x;
+      y = (y * p.scale_y) + p.offset_y;
+      return { x, y };
+    }
+
+    function rgbToHsl(r, g, b) {
+      const rn = r / 255;
+      const gn = g / 255;
+      const bn = b / 255;
+      const max = Math.max(rn, gn, bn);
+      const min = Math.min(rn, gn, bn);
+      const l = (max + min) / 2;
+      if (max === min) return { h: 0, s: 0, l };
+      const d = max - min;
+      const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      return { h: 0, s, l };
+    }
+
+    function detectPlayableRectFromImage(img) {
+      try {
+        if (!img || !img.width || !img.height) return null;
+        const maxSide = 512;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.max(32, Math.floor(img.width * scale));
+        const h = Math.max(32, Math.floor(img.height * scale));
+        const cv = document.createElement("canvas");
+        cv.width = w;
+        cv.height = h;
+        const ctx = cv.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0, 0, w, h).data;
+
+        let minX = w, maxX = -1, minY = h, maxY = -1;
+        let active = 0;
+        for (let y = 0; y < h; y += 2) {
+          for (let x = 0; x < w; x += 2) {
+            const i = (y * w + x) * 4;
+            const a = data[i + 3];
+            if (a < 8) continue;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const { s, l } = rgbToHsl(r, g, b);
+            // Playable terrain tends to have more color variation than gray border regions.
+            const isPlayable = (s > 0.08 && l > 0.08 && l < 0.95) || (l > 0.18 && l < 0.75 && s > 0.04);
+            if (!isPlayable) continue;
+            active++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+
+        if (active < 120 || maxX <= minX || maxY <= minY) return null;
+        const rx = minX / w;
+        const ry = minY / h;
+        const rw = (maxX - minX) / w;
+        const rh = (maxY - minY) / h;
+        // Basic sanity clamp.
+        if (rw < 0.35 || rh < 0.35 || rw > 0.98 || rh > 0.98) return null;
+        return { x: rx, y: ry, w: rw, h: rh };
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function defaultHllPlayableRect() {
+      const inset = HLL_PLAYABLE_BORDER_RATIO;
+      const size = Math.max(0.05, 1 - inset * 2);
+      return { x: inset, y: inset, w: size, h: size };
+    }
+
+    function quantile(sorted, q) {
+      if (!sorted.length) return null;
+      if (sorted.length === 1) return sorted[0];
+      const pos = (sorted.length - 1) * q;
+      const lo = Math.floor(pos);
+      const hi = Math.ceil(pos);
+      if (lo === hi) return sorted[lo];
+      const t = pos - lo;
+      return sorted[lo] * (1 - t) + sorted[hi] * t;
+    }
+
+    function estimateProjectionForFrame(frame) {
+      const players = (frame?.players || []).filter(p => p?.world_position && typeof p.world_position.x === "number" && typeof p.world_position.y === "number");
+      if (players.length < 8) return null;
+
+      const explicitBounds = normalizeBounds(frame.map_bounds || null) || getMapBoundsFromInputs(false);
+      const target = explicitBounds || detectBounds(players, { projection: normalizeProjection({}) });
+      if (!target) return null;
+
+      const candidates = [
+        { flip_x: false, flip_y: true, swap_xy: false }, // Typical map image Y-axis inversion.
+        { flip_x: false, flip_y: false, swap_xy: false },
+        { flip_x: true, flip_y: false, swap_xy: false },
+        { flip_x: true, flip_y: true, swap_xy: false },
+        { flip_x: false, flip_y: true, swap_xy: true },
+        { flip_x: false, flip_y: false, swap_xy: true },
+        { flip_x: true, flip_y: false, swap_xy: true },
+        { flip_x: true, flip_y: true, swap_xy: true },
+      ];
+
+      const txRange = target.xMax - target.xMin;
+      const tyRange = target.yMax - target.yMin;
+      if (txRange <= 0 || tyRange <= 0) return null;
+
+      let best = null;
+
+      for (const c of candidates) {
+        const oriented = [];
+        for (const p of players) {
+          const v = projectWorldWithProjection(p.world_position, { ...c, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 });
+          if (v) oriented.push(v);
+        }
+        if (oriented.length < 8) continue;
+
+        const xs = oriented.map(v => v.x).sort((a, b) => a - b);
+        const ys = oriented.map(v => v.y).sort((a, b) => a - b);
+        const xLo = quantile(xs, 0.02);
+        const xHi = quantile(xs, 0.98);
+        const yLo = quantile(ys, 0.02);
+        const yHi = quantile(ys, 0.98);
+        if (![xLo, xHi, yLo, yHi].every(Number.isFinite)) continue;
+        if (xHi <= xLo || yHi <= yLo) continue;
+
+        let scaleX = txRange / (xHi - xLo);
+        let scaleY = tyRange / (yHi - yLo);
+        if (HLL_USE_UNIFORM_SCALE) {
+          const uni = (scaleX + scaleY) / 2;
+          scaleX = uni;
+          scaleY = uni;
+        }
+        const proj = normalizeProjection({
+          ...c,
+          scale_x: scaleX,
+          scale_y: scaleY,
+          offset_x: target.xMin - (xLo * scaleX),
+          offset_y: target.yMin - (yLo * scaleY),
+        });
+        if (!proj) continue;
+
+        let inBounds = 0;
+        let sx = 0;
+        let sy = 0;
+        for (const p of players) {
+          const wp = projectWorldWithProjection(p.world_position, proj);
+          if (!wp) continue;
+          sx += wp.x;
+          sy += wp.y;
+          if (wp.x >= target.xMin && wp.x <= target.xMax && wp.y >= target.yMin && wp.y <= target.yMax) inBounds++;
+        }
+        const n = players.length;
+        const inRatio = n ? (inBounds / n) : 0;
+        const mx = sx / n;
+        const my = sy / n;
+        const cx = (target.xMin + target.xMax) / 2;
+        const cy = (target.yMin + target.yMax) / 2;
+        const centerErr = Math.sqrt(((mx - cx) / txRange) ** 2 + ((my - cy) / tyRange) ** 2);
+        const anisotropy = Math.abs(Math.log(Math.abs(proj.scale_x / proj.scale_y)));
+
+        // Prefer high in-bounds fits, centered cloud, and less axis distortion.
+        let score = (inRatio * 5.0) - (centerErr * 1.2) - (anisotropy * 0.25);
+        if (c.flip_y) score += 0.05;
+        if (c.swap_xy) score -= 0.03;
+
+        if (!best || score > best.score) {
+          best = { score, proj, inRatio };
+        }
+      }
+
+      return best;
+    }
+
+    function autoCalibrateProjection() {
+      const frame = state.frame;
+      if (!frame) {
+        setStatus("Auto calibrate needs a live/replay frame first.");
+        return;
+      }
+      const fit = estimateProjectionForFrame(frame);
+      if (!fit || !fit.proj) {
+        setStatus("Auto calibrate failed. Need more player data and usable map bounds.");
+        return;
+      }
+      if (state.frame) state.frame.projection = fit.proj;
+      setProjectionInputs(fit.proj);
+      drawFrame(frame);
+      renderRoster(frame);
+      setStatus(`Auto calibration applied (in-bounds ~${Math.round(fit.inRatio * 100)}%). Click Save Config to persist.`);
+    }
+
     function dedupe(values) {
       return [...new Set(values.filter(Boolean))];
     }
@@ -482,7 +691,10 @@
 
     function getMapVisualStatus() {
       const status = state.mapVisual.status;
-      if (status === "ready" && state.mapVisual.src) return `visual:${state.mapVisual.src}`;
+      if (status === "ready" && state.mapVisual.src) {
+        const pr = state.mapVisual.playableRectSource || "none";
+        return `visual:${state.mapVisual.src} playable:${pr}`;
+      }
       if (status === "loading") return "visual:loading";
       if (status === "missing") return "visual:missing";
       return "visual:off";
@@ -503,6 +715,8 @@
         status: candidates.length ? "loading" : "missing",
         img: null,
         src: "",
+        playableRect: null,
+        playableRectSource: "none",
       };
       if (!candidates.length) return;
 
@@ -519,6 +733,10 @@
         const cached = state.mapVisualCache[src];
         if (cached && cached.ok && cached.img) {
           state.mapVisual = { ...state.mapVisual, status: "ready", img: cached.img, src };
+          if (!state.mapVisual.playableRect) {
+            state.mapVisual.playableRect = detectPlayableRectFromImage(cached.img) || defaultHllPlayableRect();
+            state.mapVisual.playableRectSource = state.mapVisual.playableRect ? "image" : "hll-default";
+          }
           if (state.frame) drawFrame(state.frame);
           return;
         }
@@ -531,7 +749,15 @@
         img.onload = () => {
           state.mapVisualCache[src] = { ok: true, img };
           if (state.mapVisual.key !== expectedKey) return;
-          state.mapVisual = { ...state.mapVisual, status: "ready", img, src };
+          const detectedPlayable = detectPlayableRectFromImage(img) || defaultHllPlayableRect();
+          state.mapVisual = {
+            ...state.mapVisual,
+            status: "ready",
+            img,
+            src,
+            playableRect: detectedPlayable,
+            playableRectSource: detectedPlayable ? "image" : "hll-default",
+          };
           if (state.frame) drawFrame(state.frame);
         };
         img.onerror = () => {
@@ -633,6 +859,16 @@
       return { x, y, w, h };
     }
 
+    function getPlayableViewport(imageViewport) {
+      const r = state.mapVisual?.playableRect || defaultHllPlayableRect();
+      return {
+        x: imageViewport.x + (r.x * imageViewport.w),
+        y: imageViewport.y + (r.y * imageViewport.h),
+        w: imageViewport.w * r.w,
+        h: imageViewport.h * r.h,
+      };
+    }
+
     function project(v, min, max, size) {
       if (max === min) return size / 2;
       return ((v - min) / (max - min)) * size;
@@ -660,6 +896,7 @@
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const viewport = getMapViewport(canvas, bounds);
+      const playableViewport = getPlayableViewport(viewport);
 
       if (state.mapVisual.status === "ready" && state.mapVisual.img) {
         ctx.save();
@@ -670,11 +907,11 @@
 
       // grid
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      for (let x = viewport.x; x <= viewport.x + viewport.w; x += 64) {
-        ctx.beginPath(); ctx.moveTo(x, viewport.y); ctx.lineTo(x, viewport.y + viewport.h); ctx.stroke();
+      for (let x = playableViewport.x; x <= playableViewport.x + playableViewport.w; x += 64) {
+        ctx.beginPath(); ctx.moveTo(x, playableViewport.y); ctx.lineTo(x, playableViewport.y + playableViewport.h); ctx.stroke();
       }
-      for (let y = viewport.y; y <= viewport.y + viewport.h; y += 64) {
-        ctx.beginPath(); ctx.moveTo(viewport.x, y); ctx.lineTo(viewport.x + viewport.w, y); ctx.stroke();
+      for (let y = playableViewport.y; y <= playableViewport.y + playableViewport.h; y += 64) {
+        ctx.beginPath(); ctx.moveTo(playableViewport.x, y); ctx.lineTo(playableViewport.x + playableViewport.w, y); ctx.stroke();
       }
 
       state.projected = [];
@@ -689,8 +926,8 @@
         const w = p.world_position;
         const wp = projectWorld(w, frame);
         if (!wp) continue;
-        const x = viewport.x + project(wp.x, bounds.xMin, bounds.xMax, viewport.w);
-        const y = viewport.y + project(wp.y, bounds.yMin, bounds.yMax, viewport.h);
+        const x = playableViewport.x + project(wp.x, bounds.xMin, bounds.xMax, playableViewport.w);
+        const y = playableViewport.y + project(wp.y, bounds.yMin, bounds.yMax, playableViewport.h);
         const axis = String(p.team || "").toLowerCase().includes("axis");
         const color = axis ? "#ff5f5f" : "#58a6ff";
         ctx.beginPath();
@@ -833,6 +1070,7 @@
       bindCanvasHover();
       $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
       $("testLiveBtn").onclick = async () => { try { await pollLive(); setStatus("Live fetch OK."); } catch (e) { setStatus(e.message); } };
+      $("autoCalibBtn").onclick = () => { try { autoCalibrateProjection(); } catch (e) { setStatus(e.message); } };
       $("startRecBtn").onclick = async () => {
         try {
           const j = await api("/api/record/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
