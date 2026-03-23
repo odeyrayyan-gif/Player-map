@@ -445,6 +445,22 @@
       return { xMin: xMin - xp, xMax: xMax + xp, yMin: yMin - yp, yMax: yMax + yp };
     }
 
+    function outOfBoundsRatio(bounds, players) {
+      if (!bounds) return 1;
+      let valid = 0;
+      let out = 0;
+      for (const p of players || []) {
+        const w = p.world_position;
+        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
+        valid++;
+        if (w.x < bounds.xMin || w.x > bounds.xMax || w.y < bounds.yMin || w.y > bounds.yMax) {
+          out++;
+        }
+      }
+      if (!valid) return 1;
+      return out / valid;
+    }
+
     function mergeBounds(a, b) {
       if (!a) return b;
       if (!b) return a;
@@ -459,7 +475,12 @@
     function getRenderBounds(frame, players) {
       const explicit = normalizeBounds(frame.map_bounds || null);
       if (explicit) {
-        return { ...explicit, source: frame.map_bounds_source || "configured" };
+        const ratio = outOfBoundsRatio(explicit, players);
+        if (players.length < 5 || ratio <= 0.35) {
+          return { ...explicit, source: frame.map_bounds_source || "configured" };
+        }
+        // If most players sit outside explicit bounds, treat bounds as invalid and fall back.
+        setStatus(`Configured/API bounds look invalid (${Math.round(ratio * 100)}% out of bounds). Using auto bounds.`);
       }
 
       const mapKey = String(frame.map_name || "UNKNOWN MAP").toUpperCase();
@@ -471,6 +492,27 @@
         return { ...merged, source: "auto" };
       }
       return null;
+    }
+
+    function getMapViewport(canvas, bounds) {
+      const outerPad = 8;
+      const availW = Math.max(1, canvas.width - outerPad * 2);
+      const availH = Math.max(1, canvas.height - outerPad * 2);
+      const imageAspect = state.mapVisual?.img ? (state.mapVisual.img.width / state.mapVisual.img.height) : 0;
+      const boundsAspect = bounds ? ((bounds.xMax - bounds.xMin) / Math.max(1e-9, bounds.yMax - bounds.yMin)) : 0;
+      const targetAspect = Number.isFinite(imageAspect) && imageAspect > 0
+        ? imageAspect
+        : (Number.isFinite(boundsAspect) && boundsAspect > 0 ? boundsAspect : (availW / availH));
+
+      let w = availW;
+      let h = w / targetAspect;
+      if (h > availH) {
+        h = availH;
+        w = h * targetAspect;
+      }
+      const x = (canvas.width - w) / 2;
+      const y = (canvas.height - h) / 2;
+      return { x, y, w, h };
     }
 
     function project(v, min, max, size) {
@@ -493,18 +535,23 @@
       canvas.height = Math.max(400, Math.floor(rect.height));
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const viewport = getMapViewport(canvas, bounds);
 
       if (state.mapVisual.status === "ready" && state.mapVisual.img) {
         ctx.save();
         ctx.globalAlpha = 0.55;
-        ctx.drawImage(state.mapVisual.img, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(state.mapVisual.img, viewport.x, viewport.y, viewport.w, viewport.h);
         ctx.restore();
       }
 
       // grid
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      for (let x = 0; x < canvas.width; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-      for (let y = 0; y < canvas.height; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+      for (let x = viewport.x; x <= viewport.x + viewport.w; x += 64) {
+        ctx.beginPath(); ctx.moveTo(x, viewport.y); ctx.lineTo(x, viewport.y + viewport.h); ctx.stroke();
+      }
+      for (let y = viewport.y; y <= viewport.y + viewport.h; y += 64) {
+        ctx.beginPath(); ctx.moveTo(viewport.x, y); ctx.lineTo(viewport.x + viewport.w, y); ctx.stroke();
+      }
 
       state.projected = [];
       if (!bounds) {
@@ -517,8 +564,8 @@
       for (const p of players) {
         const w = p.world_position;
         if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
-        const x = project(w.x, bounds.xMin, bounds.xMax, canvas.width);
-        const y = project(w.y, bounds.yMin, bounds.yMax, canvas.height);
+        const x = viewport.x + project(w.x, bounds.xMin, bounds.xMax, viewport.w);
+        const y = viewport.y + project(w.y, bounds.yMin, bounds.yMax, viewport.h);
         const axis = String(p.team || "").toLowerCase().includes("axis");
         const color = axis ? "#ff5f5f" : "#58a6ff";
         ctx.beginPath();
