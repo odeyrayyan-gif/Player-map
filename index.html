@@ -219,13 +219,13 @@
     // HLL-specific geometry assumptions:
     // - world center is (0, 0)
     // - map spans 10x10 grid cells
-    // - each grid cell is 20,000 world units
+    // - default full span is 100,000 world units (-50,000..50,000)
     // - map images can include gray border around playable area
     const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
     const HLL_USE_UNIFORM_SCALE = false;
-    const HLL_GRID_WORLD_SIZE = 20000;
     const HLL_GRID_CELLS = 10;
-    const HLL_WORLD_HALF = (HLL_GRID_CELLS * HLL_GRID_WORLD_SIZE) / 2; // 100000
+    const HLL_WORLD_HALF = 50000;
+    const HLL_GRID_WORLD_SIZE = (HLL_WORLD_HALF * 2) / HLL_GRID_CELLS; // 10000
     const HLL_WORLD_MIN = -HLL_WORLD_HALF;
     const HLL_WORLD_MAX = HLL_WORLD_HALF;
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
