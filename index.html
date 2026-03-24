@@ -294,17 +294,24 @@
     // - Vertical sample map: Remagen (C1/H1/C10/H10)
     // These are used as deterministic templates to avoid per-session stretch drift.
     const HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS = {
+      // Centered on world origin (0,0) using user-provided corner anchors.
+      // Horizontal anchors (Carentan A3/J3/A8/J8) imply these half-extents:
+      //   xHalf=(|xMin|+|xMax|)/2 = 98454.4921875
+      //   yHalf=(|yMin|+|yMax|)/2 = 60478.94140625
       horizontal: {
-        xMin: -98329.9921875,
-        xMax: 98578.9921875,
-        yMin: -60479.3203125,
-        yMax: 60478.5625,
+        xMin: -98454.4921875,
+        xMax: 98454.4921875,
+        yMin: -60478.94140625,
+        yMax: 60478.94140625,
       },
+      // Vertical anchors (Remagen C1/H1/C10/H10) imply these half-extents:
+      //   xHalf=(|xMin|+|xMax|)/2 = 59517.09375
+      //   yHalf=(|yMin|+|yMax|)/2 = 97104.99609375
       vertical: {
-        xMin: -59515.375,
-        xMax: 59518.8125,
-        yMin: -96655.078125,
-        yMax: 97554.9140625,
+        xMin: -59517.09375,
+        xMax: 59517.09375,
+        yMin: -97104.99609375,
+        yMax: 97104.99609375,
       },
     };
     const HLL_MAP_PLAYABLE_WORLD_BOUNDS_PRESETS = {
