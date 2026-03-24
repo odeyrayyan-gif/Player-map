@@ -666,6 +666,28 @@
       return normalizeRoleForCompare(role) === "tankcommander";
     }
 
+    function isCommanderRole(role, squad) {
+      const r = normalizeRoleForCompare(role);
+      if (r === "armycommander" || r === "commander") return true;
+      const s = String(squad || "").trim().toLowerCase();
+      return s === "command";
+    }
+
+    function drawCommanderTriangleDots(ctx, x, y) {
+      // Distinct commander badge: three small dots in a triangle.
+      const points = [
+        { dx: 0, dy: -2.4 },
+        { dx: -2.6, dy: 1.9 },
+        { dx: 2.6, dy: 1.9 },
+      ];
+      for (const pt of points) {
+        ctx.beginPath();
+        ctx.arc(x + pt.dx, y + pt.dy, 1.35, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.95)";
+        ctx.fill();
+      }
+    }
+
     function playerIdentityKey(player) {
       const name = playerNameKey(player?.name);
       const team = String(player?.team || "").trim().toLowerCase();
@@ -1739,6 +1761,7 @@
         const axis = String(p.team || "").toLowerCase().includes("axis");
         const color = axis ? playerColors.axis : playerColors.allies;
         const isTank = Boolean(p.is_tank_role) || isTankRole(p.role);
+        const isCommander = isCommanderRole(p.role, p.squad);
         ctx.beginPath();
         ctx.arc(x, y, isTank ? 6.5 : 5, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -1757,7 +1780,9 @@
           ctx.lineWidth = 1.4;
           ctx.stroke();
         }
-        if (p.is_squad_leader) {
+        if (isCommander) {
+          drawCommanderTriangleDots(ctx, x, y);
+        } else if (p.is_squad_leader) {
           const initial = getSquadInitial(p.squad, p.name);
           if (initial) {
             ctx.fillStyle = "rgba(0, 0, 0, 0.95)";
