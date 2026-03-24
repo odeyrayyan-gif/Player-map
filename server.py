@@ -391,6 +391,64 @@ def extract_teams(payload):
 def flatten_players(allied_data, axis_data):
     out = []
 
+    def player_identity_set(p):
+        ids = set()
+        for key in ("player_id", "id", "steam_id", "steamid", "name", "player"):
+            value = p.get(key)
+            if value is None:
+                continue
+            ids.add(str(value).strip().lower())
+        return {v for v in ids if v}
+
+    def match_player_ref(player_ids, ref):
+        if ref is None:
+            return False
+        if isinstance(ref, dict):
+            for key in ("player_id", "id", "steam_id", "steamid", "name", "player"):
+                if match_player_ref(player_ids, ref.get(key)):
+                    return True
+            return False
+        value = str(ref).strip().lower()
+        return bool(value) and value in player_ids
+
+    def infer_squad_leader(squad, p):
+        if bool(
+            p.get("is_squad_leader")
+            or p.get("is_leader")
+            or p.get("leader")
+            or p.get("squad_leader")
+        ):
+            return True
+
+        player_ids = player_identity_set(p)
+        if not player_ids:
+            return False
+
+        for key in ("leader", "squad_leader", "officer", "squadlead"):
+            if match_player_ref(player_ids, squad.get(key)):
+                return True
+
+        role = str(p.get("role") or "").strip().lower()
+        if role in {"officer", "tankcommander", "spotter"}:
+            return True
+        return False
+
+    def extract_vehicle_label(p):
+        for key in (
+            "vehicle",
+            "vehicle_name",
+            "vehicle_type",
+            "current_vehicle",
+            "active_vehicle",
+        ):
+            value = p.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
     def push_team(team_data, team_name):
         squads = team_data.get("squads", team_data)
         if isinstance(squads, dict):
@@ -403,32 +461,38 @@ def flatten_players(allied_data, axis_data):
                 for p in players:
                     if not isinstance(p, dict):
                         continue
+                    role = p.get("role") or ""
                     out.append(
                         {
                             "name": p.get("name") or p.get("player") or "Unknown",
                             "player_id": p.get("player_id"),
-                            "role": p.get("role") or "",
+                            "role": role,
                             "kills": p.get("kills") or 0,
                             "deaths": p.get("deaths") or 0,
                             "squad": squad_name,
                             "team": team_name,
                             "world_position": p.get("world_position"),
+                            "is_squad_leader": infer_squad_leader(squad, p),
+                            "vehicle": extract_vehicle_label(p),
                         }
                     )
 
         commander = team_data.get("commander")
         if isinstance(commander, dict) and isinstance(commander.get("player"), dict):
             p = commander["player"]
+            role = p.get("role") or "armycommander"
             out.append(
                 {
                     "name": p.get("name") or p.get("player") or "Commander",
                     "player_id": p.get("player_id"),
-                    "role": p.get("role") or "armycommander",
+                    "role": role,
                     "kills": p.get("kills") or 0,
                     "deaths": p.get("deaths") or 0,
                     "squad": "COMMAND",
                     "team": team_name,
                     "world_position": p.get("world_position"),
+                    "is_squad_leader": True,
+                    "vehicle": extract_vehicle_label(p),
                 }
             )
 

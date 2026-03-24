@@ -468,6 +468,18 @@
       };
     }
 
+    function isTankRole(role) {
+      const r = String(role || "").toLowerCase();
+      return r.includes("tank") || r.includes("armor") || r.includes("crewman");
+    }
+
+    function getSquadInitial(squad) {
+      const text = String(squad || "").trim();
+      if (!text) return "";
+      const m = text.match(/[A-Za-z0-9]/);
+      return m ? m[0].toUpperCase() : "";
+    }
+
     function setPlayerColorsInputs(raw) {
       const c = normalizePlayerColors(raw);
       $("alliesColor").value = c.allies;
@@ -1060,10 +1072,28 @@
         const y = playableViewport.y + project(wp.y, bounds.yMin, bounds.yMax, playableViewport.h);
         const axis = String(p.team || "").toLowerCase().includes("axis");
         const color = axis ? playerColors.axis : playerColors.allies;
+        const isTank = Boolean(p.is_tank_role) || isTankRole(p.role);
         ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.arc(x, y, isTank ? 6.5 : 5, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
+        if (isTank) {
+          ctx.beginPath();
+          ctx.arc(x, y, 9, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 215, 0, 0.85)";
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+        }
+        if (p.is_squad_leader) {
+          const initial = getSquadInitial(p.squad);
+          if (initial) {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+            ctx.font = "bold 10px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(initial, x, y);
+          }
+        }
         state.projected.push({ x, y, p });
       }
     }
@@ -1192,7 +1222,11 @@
         }
         const p = best.p;
         $("hoverName").textContent = p.name || "Unknown";
-        $("hoverMeta").textContent = `${p.role || "role?"} · ${p.team || "team?"} · ${p.squad || "squad?"} · K:${p.kills || 0} D:${p.deaths || 0}`;
+        const tags = [];
+        if (p.is_squad_leader) tags.push("SL");
+        if (p.is_tank_role || isTankRole(p.role)) tags.push("TANK");
+        const tagTxt = tags.length ? ` · ${tags.join("/")}` : "";
+        $("hoverMeta").textContent = `${p.role || "role?"} · ${p.team || "team?"} · ${p.squad || "squad?"}${tagTxt} · K:${p.kills || 0} D:${p.deaths || 0}`;
       });
     }
 
