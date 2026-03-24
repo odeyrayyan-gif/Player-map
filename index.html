@@ -142,7 +142,7 @@
 </head>
 <body>
   <div class="brand-banner" title="Pathfinders">
-    <img src="/maps/pathfinders_logo.png" alt="Pathfinders" />
+    <img id="brandLogo" src="./maps/pathfinders_logo.png" alt="Pathfinders" />
   </div>
   <div class="top">
     <div class="card">
@@ -1349,8 +1349,35 @@
       });
     }
 
+    function initBrandLogo() {
+      const img = $("brandLogo");
+      if (!img) return;
+      const stamp = String(Date.now());
+      const candidates = [
+        "./maps/pathfinders_logo.png",
+        "./maps/pathfinders_logo.webp",
+        "./maps/pathfinders_logo.jpg",
+        "./maps/pathfinders_logo.jpeg",
+        "./maps/Pathfinders_logo.png",
+        "./maps/pathfinders-logo.png",
+        "./maps/PATHFINDERS.png",
+      ].map((p) => `${p}?v=${stamp}`);
+      let idx = 0;
+      img.onerror = () => {
+        idx += 1;
+        if (idx >= candidates.length) {
+          img.onerror = null;
+          img.style.display = "none";
+          return;
+        }
+        img.src = candidates[idx];
+      };
+      img.src = candidates[idx];
+    }
+
 
     async function init() {
+      initBrandLogo();
       bindCanvasHover();
       bindCanvasZoom();
       $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
