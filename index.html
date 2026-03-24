@@ -236,6 +236,10 @@
     const AUTO_CALIB_SCALE_MAX = 1.18;
     const AUTO_CALIB_MAX_OFFSET_RATIO = 0.08;
     const AUTO_CALIB_MAX_SCALE_RATIO = 1.12;
+    const KNOWN_MAP_SCALE_MIN = 0.95;
+    const KNOWN_MAP_SCALE_MAX = 1.05;
+    const KNOWN_MAP_MAX_OFFSET_RATIO = 0.03;
+    const KNOWN_MAP_SPREAD_BOOST = 1.0;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
       // St. Marie Du Mont:
@@ -295,6 +299,12 @@
       ...HLL_MAP_HORIZONTAL_SLUGS,
       ...HLL_MAP_VERTICAL_SLUGS,
     ]);
+    // Player projection orientation presets for maps that need a hard lock.
+    // This is separate from map image view flips.
+    const HLL_MAP_PROJECTION_PRESETS = {
+      // User-reported: SME map image right-side up, but players were vertically inverted.
+      sme: { flip_y: false, swap_xy: false },
+    };
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
       utah_beach: "utah",
@@ -329,6 +339,7 @@
       mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
       mapVisualCache: {},
       calibrationSamples: [],
+      activeMapKey: "",
     };
 
     async function api(path, options = {}) {
@@ -657,6 +668,15 @@
       return null;
     }
 
+    function getProjectionPresetForFrame(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      for (const slug of slugs) {
+        const preset = HLL_MAP_PROJECTION_PRESETS[slug];
+        if (preset) return preset;
+      }
+      return null;
+    }
+
     function defaultHllPlayableRect() {
       const inset = HLL_PLAYABLE_BORDER_RATIO;
       const size = Math.max(0.05, 1 - inset * 2);
@@ -804,6 +824,7 @@
       if (!target) return null;
       const usingHllTarget = !explicitBounds && Boolean(hllTarget);
       const knownMapPreset = Boolean(getPlayableGridPresetForFrame(frame));
+      const projectionPreset = getProjectionPresetForFrame(frame);
 
       const candidates = [
         { flip_x: false, flip_y: true, swap_xy: false }, // Typical map image Y-axis inversion.
@@ -824,6 +845,9 @@
 
       for (const c of candidates) {
         if (knownMapPreset && c.swap_xy) continue;
+        if (projectionPreset && typeof projectionPreset.flip_y === "boolean" && c.flip_y !== projectionPreset.flip_y) continue;
+        if (projectionPreset && typeof projectionPreset.flip_x === "boolean" && c.flip_x !== projectionPreset.flip_x) continue;
+        if (projectionPreset && typeof projectionPreset.swap_xy === "boolean" && c.swap_xy !== projectionPreset.swap_xy) continue;
         const oriented = [];
         for (const p of points) {
           const v = projectWorldWithProjection(p, { ...c, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 });
@@ -855,14 +879,17 @@
             scaleX = uni;
             scaleY = uni;
           }
-          scaleX = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleX));
-          scaleY = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleY));
+          const sMin = knownMapPreset ? KNOWN_MAP_SCALE_MIN : AUTO_CALIB_SCALE_MIN;
+          const sMax = knownMapPreset ? KNOWN_MAP_SCALE_MAX : AUTO_CALIB_SCALE_MAX;
+          scaleX = Math.max(sMin, Math.min(sMax, scaleX));
+          scaleY = Math.max(sMin, Math.min(sMax, scaleY));
         }
         let offsetX = target.xMin - (xLo * scaleX);
         let offsetY = target.yMin - (yLo * scaleY);
         if (usingHllTarget) {
-          const maxOx = txRange * AUTO_CALIB_MAX_OFFSET_RATIO;
-          const maxOy = tyRange * AUTO_CALIB_MAX_OFFSET_RATIO;
+          const maxOffsetRatio = knownMapPreset ? KNOWN_MAP_MAX_OFFSET_RATIO : AUTO_CALIB_MAX_OFFSET_RATIO;
+          const maxOx = txRange * maxOffsetRatio;
+          const maxOy = tyRange * maxOffsetRatio;
           offsetX = Math.max(-maxOx, Math.min(maxOx, offsetX));
           offsetY = Math.max(-maxOy, Math.min(maxOy, offsetY));
         }
@@ -875,18 +902,19 @@
         });
         if (!proj) continue;
 
-        if (AUTO_CALIB_SPREAD_BOOST > 1) {
+        const spreadBoost = knownMapPreset ? KNOWN_MAP_SPREAD_BOOST : AUTO_CALIB_SPREAD_BOOST;
+        if (spreadBoost > 1) {
           const cxTarget = (target.xMin + target.xMax) / 2;
           const cyTarget = (target.yMin + target.yMax) / 2;
-          const boostedScaleX = proj.scale_x * AUTO_CALIB_SPREAD_BOOST;
-          const boostedScaleY = proj.scale_y * AUTO_CALIB_SPREAD_BOOST;
+          const boostedScaleX = proj.scale_x * spreadBoost;
+          const boostedScaleY = proj.scale_y * spreadBoost;
           proj = normalizeProjection({
             ...proj,
             scale_x: boostedScaleX,
             scale_y: boostedScaleY,
             // Keep center fixed while increasing spread.
-            offset_x: cxTarget - ((cxTarget - proj.offset_x) * AUTO_CALIB_SPREAD_BOOST),
-            offset_y: cyTarget - ((cyTarget - proj.offset_y) * AUTO_CALIB_SPREAD_BOOST),
+            offset_x: cxTarget - ((cxTarget - proj.offset_x) * spreadBoost),
+            offset_y: cyTarget - ((cyTarget - proj.offset_y) * spreadBoost),
           });
           if (!proj) continue;
         }
@@ -945,6 +973,32 @@
       drawFrame(frame);
       renderRoster(frame);
       setStatus(`Auto calibration applied (in-bounds ~${Math.round(fit.inRatio * 100)}%, samples:${fit.sampleCount || "?"}). Click Save Config to persist.`);
+    }
+
+    function applyMapScopedProjectionDefaults(frame) {
+      if (!frame || typeof frame !== "object") return;
+      const mapKey = getMapCalibrationKey(frame);
+      if (!mapKey || state.activeMapKey === mapKey) return;
+      state.activeMapKey = mapKey;
+
+      const preset = getProjectionPresetForFrame(frame) || {};
+      const nextProjection = normalizeProjection({
+        flip_x: Boolean(preset.flip_x),
+        flip_y: Boolean(preset.flip_y),
+        swap_xy: false,
+        scale_x: 1,
+        scale_y: 1,
+        offset_x: 0,
+        offset_y: 0,
+      }) || normalizeProjection({});
+      frame.projection = nextProjection;
+      setProjectionInputs(nextProjection);
+
+      const mapViewPreset = getMapViewPresetForFrame(frame);
+      if (mapViewPreset) {
+        frame.map_view = mapViewPreset;
+        setMapViewInputs(mapViewPreset);
+      }
     }
 
     function dedupe(values) {
@@ -1301,6 +1355,7 @@
 
     function applyFrame(frame, prevOverride = null) {
       const prev = prevOverride !== null ? prevOverride : state.lastFrame;
+      applyMapScopedProjectionDefaults(frame);
       addEvents(diffEvents(prev, frame));
       recordCalibrationSample(frame);
       resolveMapVisual(frame);
