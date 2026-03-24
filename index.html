@@ -6,15 +6,17 @@
   <title>HLL Player Map App</title>
   <style>
     :root {
-      --bg: #0b1118;
-      --panel: #101a24;
-      --line: #223042;
-      --text: #dbe4f0;
-      --muted: #8ea2bb;
-      --accent: #5ac8fa;
-      --warn: #ffb347;
+      --bg: #050c06;
+      --panel: #0a1a0f;
+      --line: #1f6d35;
+      --text: #dff4e5;
+      --muted: #93c7a2;
+      --accent: #2f9e44;
+      --warn: #e7c04f;
       --red: #ff5f5f;
       --blue: #58a6ff;
+      --brand: #238334;
+      --brand-dark: #1a6a2b;
     }
     * { box-sizing: border-box; }
     body {
@@ -23,10 +25,23 @@
       color: var(--text);
       background: var(--bg);
     }
-    .top {
-      padding: 12px;
+    .brand-banner {
+      padding: 8px 12px;
       border-bottom: 1px solid var(--line);
-      background: #0e151f;
+      background: linear-gradient(180deg, #07130b 0%, #0a1a0f 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .brand-banner svg {
+      height: 54px;
+      width: auto;
+      display: block;
+    }
+    .top {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #0d1f13;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
@@ -40,7 +55,7 @@
     .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
     .row:last-child { margin-bottom: 0; }
     input, select, button {
-      background: #0a1018;
+      background: #0a130d;
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -81,7 +96,7 @@
       height: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: #0b121b;
+      background: #08120b;
       min-height: 0;
     }
     .right {
@@ -109,6 +124,16 @@
   </style>
 </head>
 <body>
+  <div class="brand-banner" title="Pathfinders">
+    <svg viewBox="0 0 512 96" role="img" aria-label="Pathfinders">
+      <g fill="var(--brand)">
+        <path d="M214 6c3 18-3 31-18 41-7 5-15 9-24 12-9 3-18 6-26 10-13 7-21 17-25 29-2-18 4-32 17-42 8-6 17-10 26-13 9-3 18-6 27-9 12-5 20-14 23-28z"/>
+        <path d="M213 20c-6 12-15 21-29 28-7 4-15 7-23 10-9 3-17 6-25 10-12 6-20 14-25 25-3-14 0-26 8-36 7-8 16-14 27-18 8-4 17-7 26-10 17-5 30-12 41-21z"/>
+        <path d="M163 95c-2-11-6-21-13-30-6-8-11-17-14-26-4-12-2-22 5-31 5-6 12-11 22-13-5 8-8 17-9 28-1 10-1 21 1 31 1 9 4 17 8 25z"/>
+      </g>
+      <text x="250" y="72" fill="var(--brand)" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700" letter-spacing="2">PATHFINDERS</text>
+    </svg>
+  </div>
   <div class="top">
     <div class="card">
       <div class="row">
@@ -470,7 +495,7 @@
 
     function isTankRole(role) {
       const r = String(role || "").toLowerCase();
-      return r.includes("tank") || r.includes("armor") || r.includes("crewman");
+      return r.includes("tank commander") || r.includes("tankcommander") || r.includes("crewman");
     }
 
     function getSquadInitial(squad) {

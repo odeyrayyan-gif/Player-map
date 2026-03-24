@@ -428,10 +428,14 @@ def flatten_players(allied_data, axis_data):
             if match_player_ref(player_ids, squad.get(key)):
                 return True
 
-        role = str(p.get("role") or "").strip().lower()
-        if role in {"officer", "tankcommander", "spotter"}:
+        role = str(p.get("role") or "").strip().lower().replace(" ", "")
+        if role in {"officer", "tankcommander", "spotter", "reconspotter"}:
             return True
         return False
+
+    def infer_tank_role(role):
+        text = str(role or "").strip().lower().replace(" ", "")
+        return text in {"tankcommander", "crewman"}
 
     def extract_vehicle_label(p):
         for key in (
@@ -473,6 +477,7 @@ def flatten_players(allied_data, axis_data):
                             "team": team_name,
                             "world_position": p.get("world_position"),
                             "is_squad_leader": infer_squad_leader(squad, p),
+                            "is_tank_role": infer_tank_role(role),
                             "vehicle": extract_vehicle_label(p),
                         }
                     )
@@ -492,6 +497,7 @@ def flatten_players(allied_data, axis_data):
                     "team": team_name,
                     "world_position": p.get("world_position"),
                     "is_squad_leader": True,
+                    "is_tank_role": infer_tank_role(role),
                     "vehicle": extract_vehicle_label(p),
                 }
             )
