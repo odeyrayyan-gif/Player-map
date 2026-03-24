@@ -32,22 +32,9 @@ If your `maps/` folder was deleted or is empty, run:
 python3 "download_maps.py"
 ```
 
-This downloads base HLL map images from a public source into `maps/` with
-filenames already normalized for this app (for example: `carentan.webp`,
-`remagen.webp`, `sme.webp`, `smdm.webp`, `utah.webp`, `omaha.webp`).
-
-To force the original high-quality pack (recommended), overwrite existing files:
-
-```bash
-python3 "download_maps.py" --variant no-grid --force
-```
-
-If you want map images with strongpoint/capture-point overlays while keeping
-the high-quality base maps:
-
-```bash
-python3 "download_maps.py" --with-points
-```
+This restores the same high-quality base map pack used earlier into `maps/`
+with canonical filenames (for example: `carentan.webp`, `remagen.webp`,
+`sme.webp`, `smdm.webp`, `utah.webp`, `omaha.webp`).
 
 Optional flags:
 
