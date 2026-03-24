@@ -125,24 +125,16 @@
       </div>
       <div class="row">
         <input id="pollMs" placeholder="Poll interval ms (e.g. 2000)" style="max-width:180px" />
-        <input id="mapXMin" placeholder="xMin" style="max-width:110px" />
-        <input id="mapXMax" placeholder="xMax" style="max-width:110px" />
-        <input id="mapYMin" placeholder="yMin" style="max-width:110px" />
-        <input id="mapYMax" placeholder="yMax" style="max-width:110px" />
         <button id="saveCfgBtn">Save Config</button>
         <button id="testLiveBtn">Test Live</button>
       </div>
       <div class="row">
-        <label class="small"><input id="flipX" type="checkbox" /> flipX</label>
-        <label class="small"><input id="flipY" type="checkbox" /> flipY</label>
-        <label class="small"><input id="swapXY" type="checkbox" /> swapXY</label>
         <label class="small"><input id="flipMapX" type="checkbox" /> flipMapX</label>
         <label class="small"><input id="flipMapY" type="checkbox" /> flipMapY</label>
-        <input id="scaleX" placeholder="scaleX (1.0)" style="max-width:120px" />
-        <input id="scaleY" placeholder="scaleY (1.0)" style="max-width:120px" />
-        <input id="offsetX" placeholder="offsetX (0)" style="max-width:120px" />
-        <input id="offsetY" placeholder="offsetY (0)" style="max-width:120px" />
-        <button id="autoCalibBtn">Auto Calibrate</button>
+        <label class="small"><input id="mirrorPlayersX" type="checkbox" /> mirror players L/R</label>
+        <label class="small"><input id="mirrorPlayersY" type="checkbox" /> mirror players U/D</label>
+        <input id="alliesColor" placeholder="Allies color (#58a6ff)" style="max-width:150px" />
+        <input id="axisColor" placeholder="Axis color (#ff5f5f)" style="max-width:150px" />
       </div>
     </div>
     <div class="card">
@@ -222,20 +214,11 @@
     // - default full span is 100,000 world units (-50,000..50,000)
     // - map images can include gray border around playable area
     const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
-    const HLL_USE_UNIFORM_SCALE = true;
     const HLL_GRID_CELLS = 10;
     const HLL_WORLD_HALF = 50000;
-    const HLL_GRID_WORLD_SIZE = (HLL_WORLD_HALF * 2) / HLL_GRID_CELLS; // 10000
     const HLL_WORLD_MIN = -HLL_WORLD_HALF;
     const HLL_WORLD_MAX = HLL_WORLD_HALF;
     const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
-    // Slight outward spread to account for icon-map mismatch and local clustering.
-    // This behaves like a tiny "zoom out" of projected points around map center.
-    const AUTO_CALIB_SPREAD_BOOST = 1.04;
-    const AUTO_CALIB_SCALE_MIN = 0.88;
-    const AUTO_CALIB_SCALE_MAX = 1.18;
-    const AUTO_CALIB_MAX_OFFSET_RATIO = 0.08;
-    const AUTO_CALIB_MAX_SCALE_RATIO = 1.12;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
       // St. Marie Du Mont:
@@ -354,12 +337,8 @@
       projected: [],
       events: [],
       lastFrame: null,
-      autoBoundsByMap: {},
       mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
       mapVisualCache: {},
-      calibrationSamples: [],
-      activeMapKey: "",
-      mapProfiles: {},
     };
 
     async function api(path, options = {}) {
@@ -372,60 +351,18 @@
     function setStatus(msg) { $("status").textContent = msg; }
 
     function getCfgFromInputs() {
-      const mapBounds = getMapBoundsFromInputs(true);
       return {
         live_stats_url: $("liveStatsUrl").value.trim(),
         team_view_url: $("teamViewUrl").value.trim(),
         gamestate_url: $("gamestateUrl").value.trim(),
         cookie: $("cookie").value.trim(),
         poll_interval_ms: Number($("pollMs").value || 2000),
-        map_bounds: mapBounds || {},
-        projection: getProjectionFromInputs(true),
+        map_bounds: {},
+        projection: { flip_x: false, flip_y: false, swap_xy: false, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 },
         map_view: getMapViewFromInputs(),
+        player_view: getPlayerViewFromInputs(),
+        player_colors: getPlayerColorsFromInputs(),
       };
-    }
-
-    function normalizeBounds(raw) {
-      if (!raw || typeof raw !== "object") return null;
-      const xMin = Number(raw.x_min);
-      const xMax = Number(raw.x_max);
-      const yMin = Number(raw.y_min);
-      const yMax = Number(raw.y_max);
-      if (![xMin, xMax, yMin, yMax].every(Number.isFinite)) return null;
-      if (xMax <= xMin || yMax <= yMin) return null;
-      return { xMin, xMax, yMin, yMax };
-    }
-
-    function setMapBoundsInputs(rawBounds) {
-      const b = normalizeBounds(rawBounds);
-      $("mapXMin").value = b ? String(b.xMin) : "";
-      $("mapXMax").value = b ? String(b.xMax) : "";
-      $("mapYMin").value = b ? String(b.yMin) : "";
-      $("mapYMax").value = b ? String(b.yMax) : "";
-    }
-
-    function getMapBoundsFromInputs(strict = false) {
-      const sxMin = $("mapXMin").value.trim();
-      const sxMax = $("mapXMax").value.trim();
-      const syMin = $("mapYMin").value.trim();
-      const syMax = $("mapYMax").value.trim();
-
-      if (!sxMin && !sxMax && !syMin && !syMax) return null;
-
-      const xMin = Number(sxMin);
-      const xMax = Number(sxMax);
-      const yMin = Number(syMin);
-      const yMax = Number(syMax);
-      const valid = [xMin, xMax, yMin, yMax].every(Number.isFinite) && xMax > xMin && yMax > yMin;
-
-      if (!valid) {
-        if (strict) {
-          throw new Error("Map bounds invalid. Set xMin/xMax/yMin/yMax with max > min, or clear all four.");
-        }
-        return null;
-      }
-
-      return { x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax };
     }
 
     async function loadConfig() {
@@ -436,9 +373,9 @@
       $("gamestateUrl").value = c.gamestate_url || "";
       $("cookie").value = c.cookie || "";
       $("pollMs").value = c.poll_interval_ms || 2000;
-      setMapBoundsInputs(c.map_bounds || null);
-      setProjectionInputs(c.projection || null);
       setMapViewInputs(c.map_view || null);
+      setPlayerViewInputs(c.player_view || null);
+      setPlayerColorsInputs(c.player_colors || null);
     }
 
     async function saveConfig() {
@@ -472,17 +409,6 @@
       $("events").innerHTML = state.events.map(e => `<div class="event">${e}</div>`).join("");
     }
 
-    function setProjectionInputs(raw) {
-      const p = normalizeProjection(raw) || normalizeProjection({});
-      $("flipX").checked = Boolean(p.flip_x);
-      $("flipY").checked = Boolean(p.flip_y);
-      $("swapXY").checked = Boolean(p.swap_xy);
-      $("scaleX").value = String(p.scale_x);
-      $("scaleY").value = String(p.scale_y);
-      $("offsetX").value = String(p.offset_x);
-      $("offsetY").value = String(p.offset_y);
-    }
-
     function normalizeMapView(raw) {
       const r = (raw && typeof raw === "object") ? raw : {};
       return {
@@ -504,76 +430,55 @@
       };
     }
 
-    function normalizeProjection(raw) {
-      const input = (raw && typeof raw === "object") ? raw : {};
-      const scaleX = Number(input.scale_x ?? 1);
-      const scaleY = Number(input.scale_y ?? 1);
-      const offsetX = Number(input.offset_x ?? 0);
-      const offsetY = Number(input.offset_y ?? 0);
-      if (![scaleX, scaleY, offsetX, offsetY].every(Number.isFinite)) return null;
-      if (Math.abs(scaleX) < 1e-9 || Math.abs(scaleY) < 1e-9) return null;
+
+    function normalizePlayerView(raw) {
+      const r = (raw && typeof raw === "object") ? raw : {};
       return {
-        flip_x: Boolean(input.flip_x),
-        flip_y: Boolean(input.flip_y),
-        swap_xy: Boolean(input.swap_xy),
-        scale_x: scaleX,
-        scale_y: scaleY,
-        offset_x: offsetX,
-        offset_y: offsetY,
+        mirror_x: Boolean(r.mirror_x),
+        mirror_y: Boolean(r.mirror_y),
       };
     }
 
-    function getProjectionFromInputs(strict = false) {
-      const projection = normalizeProjection({
-        flip_x: $("flipX").checked,
-        flip_y: $("flipY").checked,
-        swap_xy: $("swapXY").checked,
-        scale_x: $("scaleX").value.trim() === "" ? 1 : $("scaleX").value,
-        scale_y: $("scaleY").value.trim() === "" ? 1 : $("scaleY").value,
-        offset_x: $("offsetX").value.trim() === "" ? 0 : $("offsetX").value,
-        offset_y: $("offsetY").value.trim() === "" ? 0 : $("offsetY").value,
+    function setPlayerViewInputs(raw) {
+      const pv = normalizePlayerView(raw);
+      $("mirrorPlayersX").checked = pv.mirror_x;
+      $("mirrorPlayersY").checked = pv.mirror_y;
+    }
+
+    function getPlayerViewFromInputs() {
+      return {
+        mirror_x: $("mirrorPlayersX").checked,
+        mirror_y: $("mirrorPlayersY").checked,
+      };
+    }
+
+    const DEFAULT_PLAYER_COLORS = { allies: "#58a6ff", axis: "#ff5f5f" };
+
+    function normalizeHexColor(raw, fallback) {
+      const s = String(raw || "").trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+      return fallback;
+    }
+
+    function normalizePlayerColors(raw) {
+      const r = (raw && typeof raw === "object") ? raw : {};
+      return {
+        allies: normalizeHexColor(r.allies, DEFAULT_PLAYER_COLORS.allies),
+        axis: normalizeHexColor(r.axis, DEFAULT_PLAYER_COLORS.axis),
+      };
+    }
+
+    function setPlayerColorsInputs(raw) {
+      const c = normalizePlayerColors(raw);
+      $("alliesColor").value = c.allies;
+      $("axisColor").value = c.axis;
+    }
+
+    function getPlayerColorsFromInputs() {
+      return normalizePlayerColors({
+        allies: $("alliesColor").value,
+        axis: $("axisColor").value,
       });
-      if (!projection) {
-        if (strict) {
-          throw new Error("Projection invalid. Use finite scale/offset values and non-zero scales.");
-        }
-        return null;
-      }
-      return projection;
-    }
-
-    function projectWorld(rawPos, frame) {
-      if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
-      if (rawPos.x === 0 && rawPos.y === 0) return null;
-      const p = normalizeProjection(frame.projection || null) || normalizeProjection({});
-      if (!p) return { x: rawPos.x, y: rawPos.y };
-      let x = rawPos.x;
-      let y = rawPos.y;
-      if (p.swap_xy) {
-        const t = x; x = y; y = t;
-      }
-      if (p.flip_x) x = -x;
-      if (p.flip_y) y = -y;
-      x = (x * p.scale_x) + p.offset_x;
-      y = (y * p.scale_y) + p.offset_y;
-      return { x, y };
-    }
-
-    function projectWorldWithProjection(rawPos, projection) {
-      if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
-      if (rawPos.x === 0 && rawPos.y === 0) return null;
-      const p = normalizeProjection(projection || null) || normalizeProjection({});
-      if (!p) return { x: rawPos.x, y: rawPos.y };
-      let x = rawPos.x;
-      let y = rawPos.y;
-      if (p.swap_xy) {
-        const t = x; x = y; y = t;
-      }
-      if (p.flip_x) x = -x;
-      if (p.flip_y) y = -y;
-      x = (x * p.scale_x) + p.offset_x;
-      y = (y * p.scale_y) + p.offset_y;
-      return { x, y };
     }
 
     function rgbToHsl(r, g, b) {
@@ -695,15 +600,6 @@
       return null;
     }
 
-    function getProjectionPresetForFrame(frame) {
-      const slugs = getMapSlugCandidates(frame);
-      for (const slug of slugs) {
-        const preset = HLL_MAP_PROJECTION_PRESETS[slug];
-        if (preset) return preset;
-      }
-      return null;
-    }
-
     function defaultHllPlayableRect() {
       const inset = HLL_PLAYABLE_BORDER_RATIO;
       const size = Math.max(0.05, 1 - inset * 2);
@@ -764,288 +660,6 @@
       if (lo === hi) return sorted[lo];
       const t = pos - lo;
       return sorted[lo] * (1 - t) + sorted[hi] * t;
-    }
-
-    function getMapCalibrationKey(frame) {
-      const short = normalizeMapSlug(frame?.map_shortname || "");
-      const img = normalizeMapSlug(frame?.map_image_name || "");
-      const name = normalizeMapSlug(frame?.map_name || "");
-      return short || img || name || "unknown_map";
-    }
-
-    function isLikelyValidCalibrationPoint(pos) {
-      if (!pos || typeof pos.x !== "number" || typeof pos.y !== "number") return false;
-      if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return false;
-      if (pos.x === 0 && pos.y === 0) return false;
-      const maxAbs = 300000;
-      if (Math.abs(pos.x) > maxAbs || Math.abs(pos.y) > maxAbs) return false;
-      return true;
-    }
-
-    function recordCalibrationSample(frame) {
-      if (!frame) return;
-      const key = getMapCalibrationKey(frame);
-      const points = (frame.players || [])
-        .map(p => p?.world_position)
-        .filter(isLikelyValidCalibrationPoint)
-        .map(p => ({ x: p.x, y: p.y }));
-      if (points.length < 6) return;
-      const now = Number(frame.ts_unix) || (Date.now() / 1000);
-      state.calibrationSamples.push({ key, ts: now, points });
-      const keepAgeSeconds = 180;
-      const keepMax = 120;
-      state.calibrationSamples = state.calibrationSamples
-        .filter(s => (now - s.ts) <= keepAgeSeconds)
-        .slice(-keepMax);
-    }
-
-    function collectCalibrationPoints(frame) {
-      const key = getMapCalibrationKey(frame);
-      const now = Number(frame?.ts_unix) || (Date.now() / 1000);
-      const fromWindow = state.calibrationSamples
-        .filter(s => s.key === key && (now - s.ts) <= 180)
-        .flatMap(s => s.points);
-      const fromFrame = (frame?.players || [])
-        .map(p => p?.world_position)
-        .filter(isLikelyValidCalibrationPoint)
-        .map(p => ({ x: p.x, y: p.y }));
-      return [...fromWindow, ...fromFrame];
-    }
-
-    function median(values) {
-      if (!values.length) return null;
-      const sorted = [...values].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      if (sorted.length % 2 === 1) return sorted[mid];
-      return (sorted[mid - 1] + sorted[mid]) / 2;
-    }
-
-    function estimateHllTargetBounds(frame, points) {
-      const playableWorldPreset = getPlayableWorldBoundsPresetForFrame(frame);
-      if (playableWorldPreset) return playableWorldPreset;
-
-      // Prefer map preset playable cells when available.
-      const presetRect = getMapPlayableRectPreset(frame);
-      const presetBounds = worldBoundsFromPlayableRect(presetRect);
-      if (presetBounds) return presetBounds;
-
-      // Otherwise infer strip orientation from sample spread.
-      const stripPlayable = estimateStripPlayableRectFromPoints(frame);
-      const stripBounds = worldBoundsFromPlayableRect(stripPlayable?.rect || null);
-      if (stripBounds) return stripBounds;
-
-      if (!points || points.length < 12) return null;
-      // Fallback: full 10x10 world extents anchored at origin.
-      return {
-        xMin: HLL_WORLD_MIN,
-        xMax: HLL_WORLD_MAX,
-        yMin: HLL_WORLD_MIN,
-        yMax: HLL_WORLD_MAX,
-      };
-    }
-
-    function estimateProjectionForFrame(frame) {
-      const points = collectCalibrationPoints(frame);
-      if (points.length < 18) return null;
-
-      const explicitBounds = normalizeBounds(frame.map_bounds || null) || getMapBoundsFromInputs(false);
-      const hllTarget = estimateHllTargetBounds(frame, points);
-      const target = explicitBounds || hllTarget || detectBounds(points.map(p => ({ world_position: p })), { projection: normalizeProjection({}) });
-      if (!target) return null;
-      const usingHllTarget = !explicitBounds && Boolean(hllTarget);
-      const knownMapPreset = Boolean(getPlayableGridPresetForFrame(frame));
-      const projectionPreset = getProjectionPresetForFrame(frame);
-
-      const candidates = [
-        { flip_x: false, flip_y: true, swap_xy: false }, // Typical map image Y-axis inversion.
-        { flip_x: false, flip_y: false, swap_xy: false },
-        { flip_x: true, flip_y: false, swap_xy: false },
-        { flip_x: true, flip_y: true, swap_xy: false },
-        { flip_x: false, flip_y: true, swap_xy: true },
-        { flip_x: false, flip_y: false, swap_xy: true },
-        { flip_x: true, flip_y: false, swap_xy: true },
-        { flip_x: true, flip_y: true, swap_xy: true },
-      ];
-
-      const txRange = target.xMax - target.xMin;
-      const tyRange = target.yMax - target.yMin;
-      if (txRange <= 0 || tyRange <= 0) return null;
-
-      let best = null;
-
-      for (const c of candidates) {
-        if (knownMapPreset && c.swap_xy) continue;
-        if (projectionPreset && typeof projectionPreset.flip_y === "boolean" && c.flip_y !== projectionPreset.flip_y) continue;
-        if (projectionPreset && typeof projectionPreset.flip_x === "boolean" && c.flip_x !== projectionPreset.flip_x) continue;
-        if (projectionPreset && typeof projectionPreset.swap_xy === "boolean" && c.swap_xy !== projectionPreset.swap_xy) continue;
-        const oriented = [];
-        for (const p of points) {
-          const v = projectWorldWithProjection(p, { ...c, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 });
-          if (v) oriented.push(v);
-        }
-        if (oriented.length < 18) continue;
-
-        const xs = oriented.map(v => v.x).sort((a, b) => a - b);
-        const ys = oriented.map(v => v.y).sort((a, b) => a - b);
-        const xLo = quantile(xs, 0.05);
-        const xHi = quantile(xs, 0.95);
-        const yLo = quantile(ys, 0.05);
-        const yHi = quantile(ys, 0.95);
-        if (![xLo, xHi, yLo, yHi].every(Number.isFinite)) continue;
-        if (xHi <= xLo || yHi <= yLo) continue;
-
-        let scaleX = txRange / (xHi - xLo);
-        let scaleY = tyRange / (yHi - yLo);
-        if (HLL_USE_UNIFORM_SCALE) {
-          const uni = (scaleX + scaleY) / 2;
-          scaleX = uni;
-          scaleY = uni;
-        }
-        if (usingHllTarget) {
-          // Keep auto-calib from overfitting to local player clusters.
-          const ratio = Math.abs(scaleX / scaleY);
-          if (Number.isFinite(ratio) && ratio > AUTO_CALIB_MAX_SCALE_RATIO) {
-            const uni = Math.sqrt(Math.abs(scaleX * scaleY));
-            scaleX = uni;
-            scaleY = uni;
-          }
-          scaleX = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleX));
-          scaleY = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleY));
-        }
-        let offsetX = target.xMin - (xLo * scaleX);
-        let offsetY = target.yMin - (yLo * scaleY);
-        if (usingHllTarget) {
-          const maxOx = txRange * AUTO_CALIB_MAX_OFFSET_RATIO;
-          const maxOy = tyRange * AUTO_CALIB_MAX_OFFSET_RATIO;
-          offsetX = Math.max(-maxOx, Math.min(maxOx, offsetX));
-          offsetY = Math.max(-maxOy, Math.min(maxOy, offsetY));
-        }
-        let proj = normalizeProjection({
-          ...c,
-          scale_x: scaleX,
-          scale_y: scaleY,
-          offset_x: offsetX,
-          offset_y: offsetY,
-        });
-        if (!proj) continue;
-
-        const spreadBoost = AUTO_CALIB_SPREAD_BOOST;
-        if (spreadBoost > 1) {
-          const cxTarget = (target.xMin + target.xMax) / 2;
-          const cyTarget = (target.yMin + target.yMax) / 2;
-          const boostedScaleX = proj.scale_x * spreadBoost;
-          const boostedScaleY = proj.scale_y * spreadBoost;
-          proj = normalizeProjection({
-            ...proj,
-            scale_x: boostedScaleX,
-            scale_y: boostedScaleY,
-            // Keep center fixed while increasing spread.
-            offset_x: cxTarget - ((cxTarget - proj.offset_x) * spreadBoost),
-            offset_y: cyTarget - ((cyTarget - proj.offset_y) * spreadBoost),
-          });
-          if (!proj) continue;
-        }
-
-        let inBounds = 0;
-        let sx = 0;
-        let sy = 0;
-        for (const p of points) {
-          const wp = projectWorldWithProjection(p, proj);
-          if (!wp) continue;
-          sx += wp.x;
-          sy += wp.y;
-          if (wp.x >= target.xMin && wp.x <= target.xMax && wp.y >= target.yMin && wp.y <= target.yMax) inBounds++;
-        }
-        const n = points.length;
-        const inRatio = n ? (inBounds / n) : 0;
-        const mx = sx / n;
-        const my = sy / n;
-        const cx = (target.xMin + target.xMax) / 2;
-        const cy = (target.yMin + target.yMax) / 2;
-        const centerErr = Math.sqrt(((mx - cx) / txRange) ** 2 + ((my - cy) / tyRange) ** 2);
-        const anisotropy = Math.abs(Math.log(Math.abs(proj.scale_x / proj.scale_y)));
-
-        // Prefer high in-bounds fits, centered cloud, and less axis distortion.
-        // Allow some anisotropy because some map textures/projections are not perfectly square-scaled.
-        const scaleErr = Math.abs(Math.log(Math.abs(proj.scale_x))) + Math.abs(Math.log(Math.abs(proj.scale_y)));
-        const offsetErr = Math.sqrt((proj.offset_x / txRange) ** 2 + (proj.offset_y / tyRange) ** 2);
-        let score = (inRatio * 5.0) - (centerErr * 1.2) - (anisotropy * 0.08);
-        if (usingHllTarget) {
-          score -= (scaleErr * 1.25) + (offsetErr * 1.6);
-        }
-        if (c.flip_y) score += 0.05;
-        if (c.swap_xy) score -= 0.03;
-
-        if (!best || score > best.score) {
-          best = { score, proj, inRatio, sampleCount: n };
-        }
-      }
-
-      return best;
-    }
-
-    function autoCalibrateProjection() {
-      const frame = state.frame;
-      if (!frame) {
-        setStatus("Auto calibrate needs a live/replay frame first.");
-        return;
-      }
-      const fit = estimateProjectionForFrame(frame);
-      if (!fit || !fit.proj) {
-        setStatus("Auto calibrate failed. Need more player data and usable map bounds.");
-        return;
-      }
-      if (state.frame) state.frame.projection = fit.proj;
-      saveProfileForFrame(state.frame);
-      setProjectionInputs(fit.proj);
-      drawFrame(frame);
-      renderRoster(frame);
-      setStatus(`Auto calibration applied (in-bounds ~${Math.round(fit.inRatio * 100)}%, samples:${fit.sampleCount || "?"}). Click Save Config to persist.`);
-    }
-
-    function saveProfileForFrame(frame) {
-      if (!frame || typeof frame !== "object") return;
-      const mapKey = getMapCalibrationKey(frame);
-      if (!mapKey) return;
-      const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
-      const mapView = normalizeMapView(frame.map_view || null);
-      state.mapProfiles[mapKey] = { projection, mapView };
-    }
-
-    function applyMapScopedProjectionDefaults(frame) {
-      if (!frame || typeof frame !== "object") return;
-      const mapKey = getMapCalibrationKey(frame);
-      if (!mapKey) return;
-      if (state.activeMapKey !== mapKey && state.lastFrame) {
-        saveProfileForFrame(state.lastFrame);
-      }
-      state.activeMapKey = mapKey;
-
-      const saved = state.mapProfiles[mapKey];
-      if (saved) {
-        frame.projection = saved.projection;
-        frame.map_view = saved.mapView;
-        setProjectionInputs(saved.projection);
-        setMapViewInputs(saved.mapView);
-        return;
-      }
-
-      const preset = getProjectionPresetForFrame(frame) || {};
-      const nextProjection = normalizeProjection({
-        flip_x: typeof preset.flip_x === "boolean" ? preset.flip_x : Boolean(frame.projection?.flip_x),
-        flip_y: typeof preset.flip_y === "boolean" ? preset.flip_y : Boolean(frame.projection?.flip_y),
-        swap_xy: typeof preset.swap_xy === "boolean" ? preset.swap_xy : false,
-        scale_x: 1,
-        scale_y: 1,
-        offset_x: 0,
-        offset_y: 0,
-      }) || normalizeProjection({});
-      const nextMapView = normalizeMapView(frame.map_view || null);
-      frame.projection = nextProjection;
-      frame.map_view = nextMapView;
-      setProjectionInputs(nextProjection);
-      setMapViewInputs(nextMapView);
-      saveProfileForFrame(frame);
     }
 
     function dedupe(values) {
@@ -1255,22 +869,10 @@
     }
 
     function getRenderBounds(frame, players) {
-      const explicit = normalizeBounds(frame.map_bounds || null);
-      if (explicit) {
-        const ratio = outOfBoundsRatio(explicit, players, frame);
-        if (players.length < 5 || ratio <= 0.35) {
-          return { ...explicit, source: frame.map_bounds_source || "configured" };
-        }
-        // If most players sit outside explicit bounds, treat bounds as invalid and fall back.
-        setStatus(`Configured/API bounds look invalid (${Math.round(ratio * 100)}% out of bounds). Using auto bounds.`);
-      }
-
       const playableWorldPreset = getPlayableWorldBoundsPresetForFrame(frame);
       if (playableWorldPreset) {
         return { ...playableWorldPreset, source: "hll-playable-preset" };
       }
-
-      // Fixed HLL world bounds fallback centered at 0,0.
       return {
         xMin: HLL_WORLD_MIN,
         xMax: HLL_WORLD_MAX,
@@ -1316,6 +918,49 @@
       return ((v - min) / (max - min)) * size;
     }
 
+    function getZoomState() {
+      const z = state.zoom || { scale: 1, centerXNorm: 0.5, centerYNorm: 0.5 };
+      const scale = Number.isFinite(z.scale) ? z.scale : 1;
+      const centerXNorm = Number.isFinite(z.centerXNorm) ? z.centerXNorm : 0.5;
+      const centerYNorm = Number.isFinite(z.centerYNorm) ? z.centerYNorm : 0.5;
+      return {
+        scale: Math.max(1, Math.min(3, scale)),
+        centerXNorm: Math.max(0, Math.min(1, centerXNorm)),
+        centerYNorm: Math.max(0, Math.min(1, centerYNorm)),
+      };
+    }
+
+    function setZoomState(next) {
+      const z = getZoomState();
+      const merged = {
+        scale: Number.isFinite(next?.scale) ? next.scale : z.scale,
+        centerXNorm: Number.isFinite(next?.centerXNorm) ? next.centerXNorm : z.centerXNorm,
+        centerYNorm: Number.isFinite(next?.centerYNorm) ? next.centerYNorm : z.centerYNorm,
+      };
+      state.zoom = {
+        scale: Math.max(1, Math.min(3, merged.scale)),
+        centerXNorm: Math.max(0, Math.min(1, merged.centerXNorm)),
+        centerYNorm: Math.max(0, Math.min(1, merged.centerYNorm)),
+      };
+    }
+
+    function applyZoomToViewport(vp) {
+      const z = getZoomState();
+      if (!vp || z.scale <= 1.0001) return vp;
+      const newW = vp.w / z.scale;
+      const newH = vp.h / z.scale;
+      let x = vp.x + (z.centerXNorm * vp.w) - (newW / 2);
+      let y = vp.y + (z.centerYNorm * vp.h) - (newH / 2);
+      const minX = vp.x;
+      const maxX = vp.x + vp.w - newW;
+      const minY = vp.y;
+      const maxY = vp.y + vp.h - newH;
+      x = Math.max(minX, Math.min(maxX, x));
+      y = Math.max(minY, Math.min(maxY, y));
+      return { x, y, w: newW, h: newH };
+    }
+
+
     function drawFrame(frame) {
       state.frame = frame;
       $("mapName").textContent = frame.map_name || "UNKNOWN MAP";
@@ -1323,16 +968,17 @@
       const players = frame.players || [];
       const bounds = getRenderBounds(frame, players);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
-      const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
       const mapView = normalizeMapView(frame.map_view || null);
+      const playerView = normalizePlayerView(frame.player_view || null);
+      const playerColors = normalizePlayerColors(frame.player_colors || null);
+      const zoom = getZoomState();
       const projFlags = [];
-      if (projection.flip_x) projFlags.push("flipX");
-      if (projection.flip_y) projFlags.push("flipY");
-      if (projection.swap_xy) projFlags.push("swapXY");
+      if (playerView.mirror_x) projFlags.push("mirrorX");
+      if (playerView.mirror_y) projFlags.push("mirrorY");
       const mapViewFlags = [];
       if (mapView.flip_x) mapViewFlags.push("mapFlipX");
       if (mapView.flip_y) mapViewFlags.push("mapFlipY");
-      const projInfo = `proj:${projFlags.join("+") || "none"} sx:${projection.scale_x} sy:${projection.scale_y} ox:${projection.offset_x} oy:${projection.offset_y} view:${mapViewFlags.join("+") || "none"}`;
+      const projInfo = `players:${projFlags.join("+") || "none"} view:${mapViewFlags.join("+") || "none"} zoom:${zoom.scale.toFixed(2)}x`;
       $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()} · ${projInfo}`;
 
       const canvas = $("mapCanvas");
@@ -1342,7 +988,8 @@
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const viewport = getMapViewport(canvas, bounds);
-      const playableViewport = getPlayableViewport(viewport);
+      const zoomedViewport = applyZoomToViewport(viewport);
+      const playableViewport = getPlayableViewport(zoomedViewport);
 
       if (state.mapVisual.status === "ready" && state.mapVisual.img) {
         ctx.save();
@@ -1357,7 +1004,7 @@
           }
         }
         ctx.globalAlpha = 0.55;
-        ctx.drawImage(state.mapVisual.img, viewport.x, viewport.y, viewport.w, viewport.h);
+        ctx.drawImage(state.mapVisual.img, zoomedViewport.x, zoomedViewport.y, zoomedViewport.w, zoomedViewport.h);
         ctx.restore();
       }
 
@@ -1385,7 +1032,7 @@
         const x = playableViewport.x + project(wp.x, bounds.xMin, bounds.xMax, playableViewport.w);
         const y = playableViewport.y + project(wp.y, bounds.yMin, bounds.yMax, playableViewport.h);
         const axis = String(p.team || "").toLowerCase().includes("axis");
-        const color = axis ? "#ff5f5f" : "#58a6ff";
+        const color = axis ? playerColors.axis : playerColors.allies;
         ctx.beginPath();
         ctx.arc(x, y, 5, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -1407,13 +1054,10 @@
 
     function applyFrame(frame, prevOverride = null) {
       const prev = prevOverride !== null ? prevOverride : state.lastFrame;
-      applyMapScopedProjectionDefaults(frame);
       addEvents(diffEvents(prev, frame));
-      recordCalibrationSample(frame);
       resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
-      saveProfileForFrame(frame);
       state.lastFrame = frame;
     }
 
@@ -1525,11 +1169,34 @@
       });
     }
 
+    function bindCanvasZoom() {
+      const canvas = $("mapCanvas");
+      canvas.addEventListener("wheel", (ev) => {
+        ev.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mx = ev.clientX - rect.left;
+        const my = ev.clientY - rect.top;
+        const xNorm = rect.width > 0 ? (mx / rect.width) : 0.5;
+        const yNorm = rect.height > 0 ? (my / rect.height) : 0.5;
+        const z = getZoomState();
+        const factor = ev.deltaY < 0 ? 1.12 : (1 / 1.12);
+        const nextScale = Math.max(1, Math.min(3, z.scale * factor));
+        setZoomState({ scale: nextScale, centerXNorm: xNorm, centerYNorm: yNorm });
+        if (state.frame) drawFrame(state.frame);
+      }, { passive: false });
+
+      canvas.addEventListener("dblclick", () => {
+        setZoomState({ scale: 1, centerXNorm: 0.5, centerYNorm: 0.5 });
+        if (state.frame) drawFrame(state.frame);
+      });
+    }
+
+
     async function init() {
       bindCanvasHover();
+      bindCanvasZoom();
       $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
       $("testLiveBtn").onclick = async () => { try { await pollLive(); setStatus("Live fetch OK."); } catch (e) { setStatus(e.message); } };
-      $("autoCalibBtn").onclick = () => { try { autoCalibrateProjection(); } catch (e) { setStatus(e.message); } };
       $("startRecBtn").onclick = async () => {
         try {
           const j = await api("/api/record/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -1550,6 +1217,18 @@
       $("playBtn").onclick = playReplay;
       $("pauseBtn").onclick = pauseReplay;
       $("timeline").oninput = (e) => showReplayIndex(Number(e.target.value));
+
+      ["mirrorPlayersX", "mirrorPlayersY", "alliesColor", "axisColor", "flipMapX", "flipMapY"].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        el.addEventListener("change", () => {
+          if (!state.frame) return;
+          state.frame.player_view = getPlayerViewFromInputs();
+          state.frame.player_colors = getPlayerColorsFromInputs();
+          state.frame.map_view = getMapViewFromInputs();
+          drawFrame(state.frame);
+        });
+      });
 
       await loadConfig();
       await refreshReplays();

@@ -39,6 +39,14 @@ DEFAULT_CONFIG = {
         "flip_x": False,
         "flip_y": False,
     },
+    "player_view": {
+        "mirror_x": False,
+        "mirror_y": False,
+    },
+    "player_colors": {
+        "allies": "#58a6ff",
+        "axis": "#ff5f5f",
+    },
 }
 
 STATE_LOCK = threading.Lock()
@@ -306,6 +314,33 @@ def normalize_map_view(raw):
     }
 
 
+def normalize_player_view(raw):
+    base = {"mirror_x": False, "mirror_y": False}
+    if not isinstance(raw, dict):
+        return dict(base)
+    return {
+        "mirror_x": bool(raw.get("mirror_x", base["mirror_x"])),
+        "mirror_y": bool(raw.get("mirror_y", base["mirror_y"])),
+    }
+
+
+def normalize_player_colors(raw):
+    base = {"allies": "#58a6ff", "axis": "#ff5f5f"}
+    if not isinstance(raw, dict):
+        return dict(base)
+
+    def clean_hex(value, fallback):
+        text = str(value or "").strip().lower()
+        if re.fullmatch(r"#[0-9a-f]{6}", text):
+            return text
+        return fallback
+
+    return {
+        "allies": clean_hex(raw.get("allies"), base["allies"]),
+        "axis": clean_hex(raw.get("axis"), base["axis"]),
+    }
+
+
 def extract_map_bounds(payload):
     result = payload.get("result", payload) if isinstance(payload, dict) else {}
     if not isinstance(result, dict):
@@ -444,6 +479,8 @@ def build_frame(cfg):
     map_bounds_source = "config" if map_bounds else "auto"
     projection = normalize_projection(cfg.get("projection"))
     map_view = normalize_map_view(cfg.get("map_view"))
+    player_view = normalize_player_view(cfg.get("player_view"))
+    player_colors = normalize_player_colors(cfg.get("player_colors"))
 
     if not map_bounds:
         tv_bounds = extract_map_bounds(tv_data)
@@ -481,6 +518,8 @@ def build_frame(cfg):
         "map_bounds_source": map_bounds_source,
         "projection": projection,
         "map_view": map_view,
+        "player_view": player_view,
+        "player_colors": player_colors,
         "allied": allied_data,
         "axis": axis_data,
         "players": players,
@@ -644,6 +683,8 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
                 "map_bounds",
                 "projection",
                 "map_view",
+                "player_view",
+                "player_colors",
             }
             update = {k: v for k, v in data.items() if k in allowed}
             if "map_bounds" in update:
@@ -652,6 +693,10 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
                 update["projection"] = normalize_projection(update.get("projection"))
             if "map_view" in update:
                 update["map_view"] = normalize_map_view(update.get("map_view"))
+            if "player_view" in update:
+                update["player_view"] = normalize_player_view(update.get("player_view"))
+            if "player_colors" in update:
+                update["player_colors"] = normalize_player_colors(update.get("player_colors"))
             cfg = write_config(update)
             self.send_json({"ok": True, "config": cfg})
             return
