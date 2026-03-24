@@ -236,10 +236,6 @@
     const AUTO_CALIB_SCALE_MAX = 1.18;
     const AUTO_CALIB_MAX_OFFSET_RATIO = 0.08;
     const AUTO_CALIB_MAX_SCALE_RATIO = 1.12;
-    const KNOWN_MAP_SCALE_MIN = 0.95;
-    const KNOWN_MAP_SCALE_MAX = 1.05;
-    const KNOWN_MAP_MAX_OFFSET_RATIO = 0.03;
-    const KNOWN_MAP_SPREAD_BOOST = 1.0;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
       // St. Marie Du Mont:
@@ -293,12 +289,6 @@
       "saintemariedumont",
       "sainte_marie_du_mont",
     ]);
-    // Known maps should not inherit a stale global map flip from a previous map.
-    // Keep visual orientation neutral unless we add a map-specific view preset.
-    const HLL_KNOWN_ORIENTATION_SLUGS = new Set([
-      ...HLL_MAP_HORIZONTAL_SLUGS,
-      ...HLL_MAP_VERTICAL_SLUGS,
-    ]);
     // Player projection orientation presets for maps that need a hard lock.
     // This is separate from map image view flips.
     const HLL_MAP_PROJECTION_PRESETS = {
@@ -340,6 +330,7 @@
       mapVisualCache: {},
       calibrationSamples: [],
       activeMapKey: "",
+      mapProfiles: {},
     };
 
     async function api(path, options = {}) {
@@ -658,16 +649,6 @@
       return null;
     }
 
-    function getMapViewPresetForFrame(frame) {
-      const slugs = getMapSlugCandidates(frame);
-      for (const slug of slugs) {
-        if (HLL_KNOWN_ORIENTATION_SLUGS.has(slug)) {
-          return { flip_x: false, flip_y: false };
-        }
-      }
-      return null;
-    }
-
     function getProjectionPresetForFrame(frame) {
       const slugs = getMapSlugCandidates(frame);
       for (const slug of slugs) {
@@ -879,17 +860,14 @@
             scaleX = uni;
             scaleY = uni;
           }
-          const sMin = knownMapPreset ? KNOWN_MAP_SCALE_MIN : AUTO_CALIB_SCALE_MIN;
-          const sMax = knownMapPreset ? KNOWN_MAP_SCALE_MAX : AUTO_CALIB_SCALE_MAX;
-          scaleX = Math.max(sMin, Math.min(sMax, scaleX));
-          scaleY = Math.max(sMin, Math.min(sMax, scaleY));
+          scaleX = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleX));
+          scaleY = Math.max(AUTO_CALIB_SCALE_MIN, Math.min(AUTO_CALIB_SCALE_MAX, scaleY));
         }
         let offsetX = target.xMin - (xLo * scaleX);
         let offsetY = target.yMin - (yLo * scaleY);
         if (usingHllTarget) {
-          const maxOffsetRatio = knownMapPreset ? KNOWN_MAP_MAX_OFFSET_RATIO : AUTO_CALIB_MAX_OFFSET_RATIO;
-          const maxOx = txRange * maxOffsetRatio;
-          const maxOy = tyRange * maxOffsetRatio;
+          const maxOx = txRange * AUTO_CALIB_MAX_OFFSET_RATIO;
+          const maxOy = tyRange * AUTO_CALIB_MAX_OFFSET_RATIO;
           offsetX = Math.max(-maxOx, Math.min(maxOx, offsetX));
           offsetY = Math.max(-maxOy, Math.min(maxOy, offsetY));
         }
@@ -902,7 +880,7 @@
         });
         if (!proj) continue;
 
-        const spreadBoost = knownMapPreset ? KNOWN_MAP_SPREAD_BOOST : AUTO_CALIB_SPREAD_BOOST;
+        const spreadBoost = AUTO_CALIB_SPREAD_BOOST;
         if (spreadBoost > 1) {
           const cxTarget = (target.xMin + target.xMax) / 2;
           const cyTarget = (target.yMin + target.yMax) / 2;
@@ -969,36 +947,56 @@
         return;
       }
       if (state.frame) state.frame.projection = fit.proj;
+      saveProfileForFrame(state.frame);
       setProjectionInputs(fit.proj);
       drawFrame(frame);
       renderRoster(frame);
       setStatus(`Auto calibration applied (in-bounds ~${Math.round(fit.inRatio * 100)}%, samples:${fit.sampleCount || "?"}). Click Save Config to persist.`);
     }
 
+    function saveProfileForFrame(frame) {
+      if (!frame || typeof frame !== "object") return;
+      const mapKey = getMapCalibrationKey(frame);
+      if (!mapKey) return;
+      const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
+      const mapView = normalizeMapView(frame.map_view || null);
+      state.mapProfiles[mapKey] = { projection, mapView };
+    }
+
     function applyMapScopedProjectionDefaults(frame) {
       if (!frame || typeof frame !== "object") return;
       const mapKey = getMapCalibrationKey(frame);
-      if (!mapKey || state.activeMapKey === mapKey) return;
+      if (!mapKey) return;
+      if (state.activeMapKey !== mapKey && state.lastFrame) {
+        saveProfileForFrame(state.lastFrame);
+      }
       state.activeMapKey = mapKey;
+
+      const saved = state.mapProfiles[mapKey];
+      if (saved) {
+        frame.projection = saved.projection;
+        frame.map_view = saved.mapView;
+        setProjectionInputs(saved.projection);
+        setMapViewInputs(saved.mapView);
+        return;
+      }
 
       const preset = getProjectionPresetForFrame(frame) || {};
       const nextProjection = normalizeProjection({
-        flip_x: Boolean(preset.flip_x),
-        flip_y: Boolean(preset.flip_y),
-        swap_xy: false,
+        flip_x: typeof preset.flip_x === "boolean" ? preset.flip_x : Boolean(frame.projection?.flip_x),
+        flip_y: typeof preset.flip_y === "boolean" ? preset.flip_y : Boolean(frame.projection?.flip_y),
+        swap_xy: typeof preset.swap_xy === "boolean" ? preset.swap_xy : false,
         scale_x: 1,
         scale_y: 1,
         offset_x: 0,
         offset_y: 0,
       }) || normalizeProjection({});
+      const nextMapView = normalizeMapView(frame.map_view || null);
       frame.projection = nextProjection;
+      frame.map_view = nextMapView;
       setProjectionInputs(nextProjection);
-
-      const mapViewPreset = getMapViewPresetForFrame(frame);
-      if (mapViewPreset) {
-        frame.map_view = mapViewPreset;
-        setMapViewInputs(mapViewPreset);
-      }
+      setMapViewInputs(nextMapView);
+      saveProfileForFrame(frame);
     }
 
     function dedupe(values) {
@@ -1272,7 +1270,7 @@
       const bounds = getRenderBounds(frame, players);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
       const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
-      const mapView = getMapViewPresetForFrame(frame) || normalizeMapView(frame.map_view || null);
+      const mapView = normalizeMapView(frame.map_view || null);
       const projFlags = [];
       if (projection.flip_x) projFlags.push("flipX");
       if (projection.flip_y) projFlags.push("flipY");
@@ -1361,6 +1359,7 @@
       resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
+      saveProfileForFrame(frame);
       state.lastFrame = frame;
     }
 
