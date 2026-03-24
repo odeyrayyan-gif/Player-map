@@ -490,6 +490,7 @@
       lastFrame: null,
       mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
       mapVisualCache: {},
+      mapVisualIndex: {},
       liveHistory: [],
       replayTimelineEvents: [],
       selectedPlayerName: "",
@@ -1348,10 +1349,31 @@
       return expandAliasSlugs([byImage, byShort, trimmedName, byName]);
     }
 
+    async function fetchMapVisualIndex() {
+      try {
+        const j = await api("/api/map_visuals");
+        const files = Array.isArray(j.files) ? j.files : [];
+        const map = {};
+        for (const item of files) {
+          if (!item || typeof item !== "object") continue;
+          const url = String(item.url || "").trim();
+          const stem = normalizeMapSlug(item.stem);
+          if (!url || !stem) continue;
+          if (!map[stem]) map[stem] = [];
+          map[stem].push(url);
+        }
+        state.mapVisualIndex = map;
+      } catch (_) {
+        state.mapVisualIndex = {};
+      }
+    }
+
     function getMapVisualPathCandidates(frame) {
       const slugs = getMapSlugCandidates(frame);
       const out = [];
       for (const slug of slugs) {
+        const indexed = state.mapVisualIndex?.[slug] || [];
+        for (const path of indexed) out.push(path);
         for (const ext of MAP_VISUAL_EXTENSIONS) {
           out.push(`/maps/${slug}.${ext}`);
         }
@@ -1920,6 +1942,7 @@
       bindCanvasZoom();
       bindFeatureControls();
       updateSelectedPlayerLabel();
+      await fetchMapVisualIndex();
       $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
       $("testLiveBtn").onclick = async () => { try { await pollLive(); setStatus("Live fetch OK."); } catch (e) { setStatus(e.message); } };
       $("startRecBtn").onclick = async () => {

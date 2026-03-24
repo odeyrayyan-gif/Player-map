@@ -16,8 +16,10 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 MATCH_DIR = os.path.join(APP_DIR, "matches")
+MAPS_DIR = os.path.join(APP_DIR, "maps")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 PORT = int(os.environ.get("PLAYER_MAP_APP_PORT", "3100"))
+MAP_VISUAL_EXTENSIONS = {".webp", ".png", ".jpg", ".jpeg"}
 
 DEFAULT_CONFIG = {
     "live_stats_url": "",
@@ -57,6 +59,7 @@ STATE = {
 
 def ensure_dirs():
     os.makedirs(MATCH_DIR, exist_ok=True)
+    os.makedirs(MAPS_DIR, exist_ok=True)
 
 
 def read_config():
@@ -704,6 +707,31 @@ def list_replays():
     return entries
 
 
+def list_map_visual_files():
+    ensure_dirs()
+    entries = []
+    try:
+        names = os.listdir(MAPS_DIR)
+    except Exception:
+        names = []
+    for name in names:
+        full = os.path.join(MAPS_DIR, name)
+        if not os.path.isfile(full):
+            continue
+        stem, ext = os.path.splitext(name)
+        if ext.lower() not in MAP_VISUAL_EXTENSIONS:
+            continue
+        entries.append(
+            {
+                "name": name,
+                "stem": normalize_map_key(stem),
+                "url": f"/maps/{urllib.parse.quote(name)}",
+            }
+        )
+    entries.sort(key=lambda x: x["name"].lower())
+    return entries
+
+
 def load_replay(match_id):
     rid = sanitize_match_id(match_id)
     if not rid:
@@ -767,6 +795,10 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/replays":
             self.send_json({"ok": True, "replays": list_replays()})
+            return
+
+        if path == "/api/map_visuals":
+            self.send_json({"ok": True, "files": list_map_visual_files()})
             return
 
         if path == "/api/replay":
