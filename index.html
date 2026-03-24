@@ -222,7 +222,7 @@
     // - default full span is 100,000 world units (-50,000..50,000)
     // - map images can include gray border around playable area
     const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
-    const HLL_USE_UNIFORM_SCALE = false;
+    const HLL_USE_UNIFORM_SCALE = true;
     const HLL_GRID_CELLS = 10;
     const HLL_WORLD_HALF = 50000;
     const HLL_GRID_WORLD_SIZE = (HLL_WORLD_HALF * 2) / HLL_GRID_CELLS; // 10000
@@ -232,10 +232,10 @@
     // Slight outward spread to account for icon-map mismatch and local clustering.
     // This behaves like a tiny "zoom out" of projected points around map center.
     const AUTO_CALIB_SPREAD_BOOST = 1.04;
-    const AUTO_CALIB_SCALE_MIN = 0.75;
-    const AUTO_CALIB_SCALE_MAX = 1.45;
-    const AUTO_CALIB_MAX_OFFSET_RATIO = 0.18;
-    const AUTO_CALIB_MAX_SCALE_RATIO = 1.35;
+    const AUTO_CALIB_SCALE_MIN = 0.88;
+    const AUTO_CALIB_SCALE_MAX = 1.18;
+    const AUTO_CALIB_MAX_OFFSET_RATIO = 0.08;
+    const AUTO_CALIB_MAX_SCALE_RATIO = 1.12;
     const HLL_STRIP_INSET_CELLS = 2;
     const HLL_MAP_PLAYABLE_GRID_PRESETS = {
       // St. Marie Du Mont:
@@ -288,6 +288,12 @@
       "st_marie_du_mont",
       "saintemariedumont",
       "sainte_marie_du_mont",
+    ]);
+    // Known maps should not inherit a stale global map flip from a previous map.
+    // Keep visual orientation neutral unless we add a map-specific view preset.
+    const HLL_KNOWN_ORIENTATION_SLUGS = new Set([
+      ...HLL_MAP_HORIZONTAL_SLUGS,
+      ...HLL_MAP_VERTICAL_SLUGS,
     ]);
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
@@ -641,6 +647,16 @@
       return null;
     }
 
+    function getMapViewPresetForFrame(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      for (const slug of slugs) {
+        if (HLL_KNOWN_ORIENTATION_SLUGS.has(slug)) {
+          return { flip_x: false, flip_y: false };
+        }
+      }
+      return null;
+    }
+
     function defaultHllPlayableRect() {
       const inset = HLL_PLAYABLE_BORDER_RATIO;
       const size = Math.max(0.05, 1 - inset * 2);
@@ -787,6 +803,7 @@
       const target = explicitBounds || hllTarget || detectBounds(points.map(p => ({ world_position: p })), { projection: normalizeProjection({}) });
       if (!target) return null;
       const usingHllTarget = !explicitBounds && Boolean(hllTarget);
+      const knownMapPreset = Boolean(getPlayableGridPresetForFrame(frame));
 
       const candidates = [
         { flip_x: false, flip_y: true, swap_xy: false }, // Typical map image Y-axis inversion.
@@ -806,6 +823,7 @@
       let best = null;
 
       for (const c of candidates) {
+        if (knownMapPreset && c.swap_xy) continue;
         const oriented = [];
         for (const p of points) {
           const v = projectWorldWithProjection(p, { ...c, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 });
@@ -1200,7 +1218,7 @@
       const bounds = getRenderBounds(frame, players);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
       const projection = normalizeProjection(frame.projection || null) || normalizeProjection({});
-      const mapView = normalizeMapView(frame.map_view || null);
+      const mapView = getMapViewPresetForFrame(frame) || normalizeMapView(frame.map_view || null);
       const projFlags = [];
       if (projection.flip_x) projFlags.push("flipX");
       if (projection.flip_y) projFlags.push("flipY");
