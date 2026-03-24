@@ -4,6 +4,7 @@ Runs independently from the overlay server.
 """
 
 import json
+import math
 import os
 import re
 import threading
@@ -514,6 +515,7 @@ def extract_teams(payload):
 
 def flatten_players(allied_data, axis_data):
     out = []
+    seen = {}
 
     def player_identity_set(p):
         ids = set()
@@ -534,6 +536,103 @@ def flatten_players(allied_data, axis_data):
             return False
         value = str(ref).strip().lower()
         return bool(value) and value in player_ids
+
+    def parse_num(value):
+        try:
+            n = float(value)
+            return n if math.isfinite(n) else None
+        except Exception:
+            return None
+
+    def parse_xy_mapping(obj):
+        if not isinstance(obj, dict):
+            return None
+        key_pairs = (
+            ("x", "y"),
+            ("X", "Y"),
+            ("world_x", "world_y"),
+            ("worldX", "worldY"),
+            ("x_pos", "y_pos"),
+            ("xPos", "yPos"),
+        )
+        for x_key, y_key in key_pairs:
+            if x_key in obj and y_key in obj:
+                x = parse_num(obj.get(x_key))
+                y = parse_num(obj.get(y_key))
+                if x is not None and y is not None:
+                    return {"x": x, "y": y}
+        return None
+
+    def normalize_world_position(raw):
+        direct = parse_xy_mapping(raw)
+        if direct:
+            return direct
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            x = parse_num(raw[0])
+            y = parse_num(raw[1])
+            if x is not None and y is not None:
+                return {"x": x, "y": y}
+        if isinstance(raw, dict):
+            for nested_key in (
+                "world_position",
+                "worldPosition",
+                "position",
+                "pos",
+                "location",
+                "coordinates",
+                "coord",
+                "coords",
+            ):
+                nested = normalize_world_position(raw.get(nested_key))
+                if nested:
+                    return nested
+        return None
+
+    def extract_world_position(p):
+        if not isinstance(p, dict):
+            return None
+        for key in (
+            "world_position",
+            "worldPosition",
+            "position",
+            "pos",
+            "location",
+            "coordinates",
+            "coord",
+            "coords",
+        ):
+            pos = normalize_world_position(p.get(key))
+            if pos:
+                return pos
+        return None
+
+    def as_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    def build_seen_key(team_name, p, name, role, squad_name):
+        ids = sorted(player_identity_set(p))
+        if ids:
+            return f"{team_name}|{'|'.join(ids)}"
+        fallback = str(name or "").strip().lower()
+        if not fallback:
+            return ""
+        role_key = re.sub(r"[^a-z0-9]+", "", str(role or "").strip().lower()) or "role"
+        squad_key = re.sub(r"[^a-z0-9]+", "", str(squad_name or "").strip().lower()) or "squad"
+        return f"{team_name}|name:{fallback}|role:{role_key}|squad:{squad_key}"
+
+    def iter_player_dicts(raw_players):
+        if isinstance(raw_players, list):
+            for item in raw_players:
+                if isinstance(item, dict):
+                    yield item
+            return
+        if isinstance(raw_players, dict):
+            for item in raw_players.values():
+                if isinstance(item, dict):
+                    yield item
 
     def infer_squad_leader(squad, p):
         if bool(
@@ -577,54 +676,102 @@ def flatten_players(allied_data, axis_data):
                 return text
         return ""
 
+    def append_player(team_name, squad_name, p, force_squad_leader=False, fallback_name="Unknown"):
+        if not isinstance(p, dict):
+            return
+        role = p.get("role") or ""
+        name = p.get("name") or p.get("player") or fallback_name
+        entry = {
+            "name": name,
+            "player_id": p.get("player_id"),
+            "role": role,
+            "kills": as_int(p.get("kills") or 0),
+            "deaths": as_int(p.get("deaths") or 0),
+            "squad": squad_name or "No Squad",
+            "team": team_name,
+            "world_position": extract_world_position(p),
+            "is_squad_leader": force_squad_leader,
+            "is_tank_role": infer_tank_role(role),
+            "vehicle": extract_vehicle_label(p),
+        }
+        key = build_seen_key(team_name, p, name, role, squad_name)
+        idx = seen.get(key) if key else None
+        if idx is None:
+            if key:
+                seen[key] = len(out)
+            out.append(entry)
+            return
+
+        # Merge duplicate player references from multiple payload locations.
+        existing = out[idx]
+        if entry["world_position"] and not existing.get("world_position"):
+            existing["world_position"] = entry["world_position"]
+        if entry["role"] and not existing.get("role"):
+            existing["role"] = entry["role"]
+        if entry["name"] and existing.get("name") in {"", "Unknown", "Commander"}:
+            existing["name"] = entry["name"]
+        if entry["vehicle"] and not existing.get("vehicle"):
+            existing["vehicle"] = entry["vehicle"]
+        if entry["squad"] and existing.get("squad") in {"", "No Squad"}:
+            existing["squad"] = entry["squad"]
+        existing["kills"] = max(as_int(existing.get("kills")), entry["kills"])
+        existing["deaths"] = max(as_int(existing.get("deaths")), entry["deaths"])
+        existing["is_squad_leader"] = bool(existing.get("is_squad_leader")) or bool(force_squad_leader)
+        existing["is_tank_role"] = bool(existing.get("is_tank_role")) or bool(entry.get("is_tank_role"))
+
     def push_team(team_data, team_name):
         squads = team_data.get("squads", team_data)
         if isinstance(squads, dict):
             for squad_name, squad in squads.items():
                 if not isinstance(squad, dict):
                     continue
-                players = squad.get("players", [])
-                if not isinstance(players, list):
+                squad_players = squad.get("players", [])
+                for p in iter_player_dicts(squad_players):
+                    append_player(
+                        team_name,
+                        str(squad_name or p.get("squad") or p.get("squad_name") or "No Squad"),
+                        p,
+                        force_squad_leader=infer_squad_leader(squad, p),
+                    )
+        elif isinstance(squads, list):
+            for squad in squads:
+                if not isinstance(squad, dict):
                     continue
-                for p in players:
-                    if not isinstance(p, dict):
-                        continue
-                    role = p.get("role") or ""
-                    out.append(
-                        {
-                            "name": p.get("name") or p.get("player") or "Unknown",
-                            "player_id": p.get("player_id"),
-                            "role": role,
-                            "kills": p.get("kills") or 0,
-                            "deaths": p.get("deaths") or 0,
-                            "squad": squad_name,
-                            "team": team_name,
-                            "world_position": p.get("world_position"),
-                            "is_squad_leader": infer_squad_leader(squad, p),
-                            "is_tank_role": infer_tank_role(role),
-                            "vehicle": extract_vehicle_label(p),
-                        }
+                squad_name = (
+                    squad.get("name")
+                    or squad.get("squad_name")
+                    or squad.get("squad")
+                    or "No Squad"
+                )
+                squad_players = squad.get("players") or squad.get("members") or []
+                for p in iter_player_dicts(squad_players):
+                    append_player(
+                        team_name,
+                        str(squad_name),
+                        p,
+                        force_squad_leader=infer_squad_leader(squad, p),
                     )
 
-        commander = team_data.get("commander")
-        if isinstance(commander, dict) and isinstance(commander.get("player"), dict):
-            p = commander["player"]
-            role = p.get("role") or "armycommander"
-            out.append(
-                {
-                    "name": p.get("name") or p.get("player") or "Commander",
-                    "player_id": p.get("player_id"),
-                    "role": role,
-                    "kills": p.get("kills") or 0,
-                    "deaths": p.get("deaths") or 0,
-                    "squad": "COMMAND",
-                    "team": team_name,
-                    "world_position": p.get("world_position"),
-                    "is_squad_leader": True,
-                    "is_tank_role": infer_tank_role(role),
-                    "vehicle": extract_vehicle_label(p),
-                }
-            )
+        for roster_key in ("players", "members", "roster"):
+            roster = team_data.get(roster_key)
+            for p in iter_player_dicts(roster):
+                squad_name = p.get("squad") or p.get("squad_name") or "No Squad"
+                append_player(team_name, str(squad_name), p, force_squad_leader=False)
+
+        commander_obj = team_data.get("commander")
+        if isinstance(commander_obj, dict):
+            commander_player = commander_obj.get("player") if isinstance(commander_obj.get("player"), dict) else commander_obj
+            if isinstance(commander_player, dict):
+                if not commander_player.get("role"):
+                    commander_player = dict(commander_player)
+                    commander_player["role"] = "armycommander"
+                append_player(
+                    team_name,
+                    "COMMAND",
+                    commander_player,
+                    force_squad_leader=True,
+                    fallback_name="Commander",
+                )
 
     push_team(allied_data, "allies")
     push_team(axis_data, "axis")
