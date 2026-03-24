@@ -193,9 +193,46 @@
     }
     .event-marker.score { background: #4edc7a; }
     .event-marker.tank { background: #ff8a80; }
+    .event-marker.multi { background: #ffd166; }
+    .event-marker.wipe { background: #ff6b6b; }
+    .event-marker.objective { background: #6ee7f9; }
     .event-marker.active {
       opacity: 1;
       outline: 1px solid rgba(255, 255, 255, 0.75);
+    }
+    .preset-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .preset-actions {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .preset-actions button { padding: 6px 8px; }
+    .vehicle-list {
+      display: grid;
+      gap: 5px;
+      max-height: 165px;
+      overflow: auto;
+      margin-top: 6px;
+    }
+    .vehicle-item {
+      font-size: 11px;
+      border: 1px solid #1f3b27;
+      border-radius: 6px;
+      padding: 6px;
+      background: #09150d;
+    }
+    .vehicle-item .v-name {
+      font-weight: 700;
+      color: #d8f5e0;
+    }
+    .vehicle-item .v-meta {
+      color: var(--muted);
+      margin-top: 2px;
     }
     .filter-grid {
       display: grid;
@@ -278,6 +315,7 @@
       <div class="row">
         <select id="replaySelect" style="flex:1"></select>
         <button id="loadReplayBtn">Load Replay</button>
+        <button id="exportAarBtn">Auto Export</button>
       </div>
       <div class="row">
         <button id="playBtn">Play</button>
@@ -299,7 +337,7 @@
         <button id="clearSelectedPlayerBtn">Clear</button>
       </div>
       <div class="timeline-wrap">
-        <div class="tag">Replay timeline (TC deaths + score jumps)</div>
+        <div class="tag">Replay timeline (score, TC deaths, multikill, wipes, objective swings)</div>
         <div id="eventTimeline" class="event-timeline"><span class="empty">Load a replay to build timeline markers.</span></div>
       </div>
       <div class="status" id="status">Ready.</div>
@@ -328,6 +366,18 @@
       </div>
       <div class="card">
         <div class="tag">Filters (hide non-selected)</div>
+        <div class="preset-row">
+          <select id="filterPresetSelect">
+            <option value="">No preset</option>
+          </select>
+          <button id="applyPresetBtn">Apply</button>
+          <button id="deletePresetBtn">Delete</button>
+        </div>
+        <div class="preset-row" style="grid-template-columns: 1fr auto auto;">
+          <input id="filterPresetName" placeholder="Preset name" />
+          <button id="savePresetBtn">Save</button>
+          <button id="clearPresetBtn">Clear</button>
+        </div>
         <div class="row">
           <input id="searchFilter" placeholder="Search name/role/squad" />
         </div>
@@ -341,6 +391,10 @@
             <select id="squadFilter" class="multi-select" multiple></select>
           </div>
         </div>
+      </div>
+      <div class="card">
+        <div class="tag">Vehicle occupancy (filtered)</div>
+        <div id="vehicleSummary" class="vehicle-list"></div>
       </div>
       <div class="card roster">
         <div class="tag">Players this frame</div>
@@ -603,12 +657,198 @@
       return new Set(Array.from(el.selectedOptions || []).map((o) => o.value));
     }
 
+    const FILTER_PRESETS_STORAGE_KEY = "hll_map_filter_presets_v1";
+    const MULTIKILL_BURST_THRESHOLD = 2;
+    const RAPID_SQUAD_WIPE_DEATHS = 3;
+    const RAPID_SQUAD_WIPE_WINDOW_SEC = 45;
+
     function getPlayerFilterState() {
       return {
         search: String($("searchFilter")?.value || "").trim().toLowerCase(),
         roles: readSelectedMultiValues("roleFilter"),
         squads: readSelectedMultiValues("squadFilter"),
       };
+    }
+
+    function toArraySorted(setLike) {
+      return [...(setLike || new Set())].sort((a, b) => String(a).localeCompare(String(b)));
+    }
+
+    function getFilterSnapshot() {
+      const f = getPlayerFilterState();
+      return {
+        search: f.search || "",
+        roles: toArraySorted(f.roles),
+        squads: toArraySorted(f.squads),
+      };
+    }
+
+    function setSelectValues(selectId, values) {
+      const el = $(selectId);
+      if (!el) return;
+      const wanted = new Set((values || []).map((v) => String(v)));
+      for (const opt of Array.from(el.options || [])) {
+        opt.selected = wanted.has(String(opt.value));
+      }
+    }
+
+    function applyFilterSnapshot(snapshot) {
+      const s = (snapshot && typeof snapshot === "object") ? snapshot : {};
+      $("searchFilter").value = String(s.search || "");
+      setSelectValues("roleFilter", Array.isArray(s.roles) ? s.roles : []);
+      setSelectValues("squadFilter", Array.isArray(s.squads) ? s.squads : []);
+      refreshRenderedFrame();
+    }
+
+    function loadFilterPresets() {
+      try {
+        const raw = localStorage.getItem(FILTER_PRESETS_STORAGE_KEY);
+        const parsed = JSON.parse(raw || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function saveFilterPresets(presets) {
+      try {
+        localStorage.setItem(FILTER_PRESETS_STORAGE_KEY, JSON.stringify(presets || {}));
+      } catch (_) {
+        // Ignore storage failures in private/locked contexts.
+      }
+    }
+
+    function listFilterPresetNames(presets) {
+      return Object.keys(presets || {}).sort((a, b) => a.localeCompare(b));
+    }
+
+    function refreshFilterPresetSelect(preselect = "") {
+      const el = $("filterPresetSelect");
+      if (!el) return;
+      const presets = loadFilterPresets();
+      const names = listFilterPresetNames(presets);
+      const current = String(preselect || el.value || "");
+      el.innerHTML = `<option value="">No preset</option>`;
+      for (const name of names) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        if (name === current) opt.selected = true;
+        el.appendChild(opt);
+      }
+      if (!names.includes(current)) el.value = "";
+    }
+
+    function saveCurrentFilterPreset() {
+      const name = String($("filterPresetName")?.value || "").trim();
+      if (!name) {
+        setStatus("Enter a preset name first.");
+        return;
+      }
+      const presets = loadFilterPresets();
+      presets[name] = getFilterSnapshot();
+      saveFilterPresets(presets);
+      refreshFilterPresetSelect(name);
+      setStatus(`Saved filter preset: ${name}`);
+    }
+
+    function applySelectedFilterPreset() {
+      const name = String($("filterPresetSelect")?.value || "").trim();
+      if (!name) {
+        setStatus("Select a preset to apply.");
+        return;
+      }
+      const presets = loadFilterPresets();
+      const snapshot = presets[name];
+      if (!snapshot) {
+        setStatus(`Preset not found: ${name}`);
+        refreshFilterPresetSelect("");
+        return;
+      }
+      applyFilterSnapshot(snapshot);
+      $("filterPresetName").value = name;
+      setStatus(`Applied filter preset: ${name}`);
+    }
+
+    function deleteSelectedFilterPreset() {
+      const name = String($("filterPresetSelect")?.value || "").trim();
+      if (!name) {
+        setStatus("Select a preset to delete.");
+        return;
+      }
+      const presets = loadFilterPresets();
+      if (!Object.prototype.hasOwnProperty.call(presets, name)) {
+        setStatus(`Preset not found: ${name}`);
+        refreshFilterPresetSelect("");
+        return;
+      }
+      delete presets[name];
+      saveFilterPresets(presets);
+      refreshFilterPresetSelect("");
+      if ($("filterPresetName")) $("filterPresetName").value = "";
+      setStatus(`Deleted filter preset: ${name}`);
+    }
+
+    function clearAllFilters() {
+      applyFilterSnapshot({ search: "", roles: [], squads: [] });
+      if ($("filterPresetSelect")) $("filterPresetSelect").value = "";
+      setStatus("Filters cleared.");
+    }
+
+    function inferVehicleBucket(player) {
+      const direct = String(player?.vehicle || "").trim();
+      if (direct) return direct;
+      const role = normalizeRoleForCompare(player?.role);
+      if (role === "tankcommander" || role === "crewman") return "Armor (unspecified vehicle)";
+      if (role === "armycommander" || role === "commander") return "Command";
+      return "";
+    }
+
+    function renderVehicleSummary(frame) {
+      const wrap = $("vehicleSummary");
+      if (!wrap) return;
+      if (!frame || typeof frame !== "object") {
+        wrap.innerHTML = `<div class="tag">No frame loaded.</div>`;
+        return;
+      }
+      const players = getDisplayedPlayers(frame, getPlayerFilterState());
+      const groups = new Map();
+      for (const p of players) {
+        const vehicleName = inferVehicleBucket(p);
+        if (!vehicleName) continue;
+        const key = vehicleName.toLowerCase();
+        const cur = groups.get(key) || {
+          name: vehicleName,
+          count: 0,
+          teams: new Set(),
+          roleCounts: new Map(),
+          names: new Set(),
+        };
+        cur.count += 1;
+        cur.teams.add(String(p.team || "unknown").trim().toLowerCase());
+        const role = roleFilterLabel(p.role);
+        cur.roleCounts.set(role, (cur.roleCounts.get(role) || 0) + 1);
+        if (p.name) cur.names.add(String(p.name));
+        groups.set(key, cur);
+      }
+
+      const items = [...groups.values()].sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
+      if (!items.length) {
+        wrap.innerHTML = `<div class="tag">No filtered players with vehicle data.</div>`;
+        return;
+      }
+      wrap.innerHTML = items.slice(0, 40).map((g) => {
+        const roles = [...g.roleCounts.entries()]
+          .sort((a, b) => (b[1] - a[1]) || String(a[0]).localeCompare(String(b[0])))
+          .slice(0, 3)
+          .map(([role, c]) => `${role}×${c}`)
+          .join(" · ");
+        const teams = [...g.teams].map((t) => (t === "axis" ? "Axis" : (t === "allies" ? "Allies" : t))).join("/");
+        return `<div class="vehicle-item">
+          <div class="v-name">${g.name} <span class="tag">(${g.count})</span></div>
+          <div class="v-meta">${teams || "Unknown team"}${roles ? ` · ${roles}` : ""}</div>
+        </div>`;
+      }).join("");
     }
 
     function playerMatchesFilters(player, filterState) {
@@ -757,12 +997,100 @@
       return filtered;
     }
 
+    function objectiveTextFromCandidate(value) {
+      if (value == null) return "";
+      if (typeof value === "string" || typeof value === "number") {
+        const t = String(value).trim();
+        return t.length ? t : "";
+      }
+      if (typeof value === "object") {
+        for (const key of ["name", "pretty_name", "id", "label", "sector", "strongpoint", "objective"]) {
+          const nested = objectiveTextFromCandidate(value[key]);
+          if (nested) return nested;
+        }
+      }
+      return "";
+    }
+
+    function extractObjectiveLabel(frame) {
+      const f = (frame && typeof frame === "object") ? frame : {};
+      const topKeys = [
+        "objective",
+        "objective_name",
+        "active_objective",
+        "current_objective",
+        "sector",
+        "active_sector",
+        "current_sector",
+        "strongpoint",
+        "strong_point",
+        "capture_point",
+        "frontline",
+      ];
+      for (const key of topKeys) {
+        const text = objectiveTextFromCandidate(f[key]);
+        if (text) return text;
+      }
+      const nestedObjs = [f.gamestate, f.current_map, f.map, f.allied, f.axis];
+      for (const obj of nestedObjs) {
+        if (!obj || typeof obj !== "object") continue;
+        for (const key of topKeys) {
+          const text = objectiveTextFromCandidate(obj[key]);
+          if (text) return text;
+        }
+      }
+      return "";
+    }
+
+    function detectObjectiveSwingDelta(prev, curr) {
+      const prevA = Number(prev?.allies_score);
+      const prevX = Number(prev?.axis_score);
+      const currA = Number(curr?.allies_score);
+      const currX = Number(curr?.axis_score);
+      if (!Number.isFinite(prevA) || !Number.isFinite(prevX) || !Number.isFinite(currA) || !Number.isFinite(currX)) {
+        return null;
+      }
+      const dA = currA - prevA;
+      const dX = currX - prevX;
+      const swing = Math.abs(dA - dX);
+      if (swing >= 6 || Math.abs(dA) >= 5 || Math.abs(dX) >= 5) {
+        return { dA, dX, swing };
+      }
+      return null;
+    }
+
+    function buildPlayerDeltaMap(prev, curr) {
+      const prevPlayers = new Map((prev?.players || []).map((p) => [playerIdentityKey(p), p]));
+      const deltas = [];
+      for (const p of (curr?.players || [])) {
+        const old = prevPlayers.get(playerIdentityKey(p));
+        if (!old) continue;
+        const kills = Number(p.kills || 0) - Number(old.kills || 0);
+        const deaths = Number(p.deaths || 0) - Number(old.deaths || 0);
+        if (!kills && !deaths) continue;
+        deltas.push({
+          name: p.name || old.name || "Unknown",
+          role: p.role || old.role || "",
+          squad: p.squad || old.squad || "",
+          team: p.team || old.team || "",
+          kills,
+          deaths,
+        });
+      }
+      return deltas;
+    }
+
     function buildReplayTimelineEvents(frames) {
       if (!Array.isArray(frames) || frames.length < 2) return [];
       const out = [];
+      const squadDeathHistory = new Map();
+      const lastWipeAt = new Map();
+
       for (let i = 1; i < frames.length; i++) {
         const prev = frames[i - 1] || {};
         const curr = frames[i] || {};
+        const ts = Number.isFinite(frameUnix(curr)) ? Number(frameUnix(curr)) : i;
+
         const prevA = Number(prev.allies_score);
         const prevX = Number(prev.axis_score);
         const currA = Number(curr.allies_score);
@@ -780,24 +1108,84 @@
           });
         }
 
-        const prevPlayers = new Map((prev.players || []).map((p) => [playerIdentityKey(p), p]));
-        for (const p of (curr.players || [])) {
-          const old = prevPlayers.get(playerIdentityKey(p));
-          if (!old) continue;
-          const dd = Number(p.deaths || 0) - Number(old.deaths || 0);
-          if (dd <= 0) continue;
-          if (!isTankCommanderRole(old.role) && !isTankCommanderRole(p.role)) continue;
-          const name = p.name || old.name || "Unknown";
+        const deltas = buildPlayerDeltaMap(prev, curr);
+        for (const d of deltas) {
+          if (d.deaths > 0 && isTankCommanderRole(d.role)) {
+            out.push({
+              index: i,
+              kind: "tank",
+              label: "T",
+              title: `Tank commander death: ${d.name} (+${d.deaths} death${d.deaths > 1 ? "s" : ""})`,
+            });
+          }
+          if (d.kills >= MULTIKILL_BURST_THRESHOLD) {
+            out.push({
+              index: i,
+              kind: "multi",
+              label: "M",
+              title: `Multi-kill burst: ${d.name} (+${d.kills} kills)`,
+            });
+          }
+        }
+
+        const deathsBySquad = new Map();
+        for (const d of deltas) {
+          if (d.deaths <= 0) continue;
+          const squad = squadFilterLabel(d.squad);
+          const team = String(d.team || "unknown").toLowerCase();
+          const key = `${team}|${squad}`;
+          const agg = deathsBySquad.get(key) || { team, squad, deaths: 0, names: new Set() };
+          agg.deaths += d.deaths;
+          agg.names.add(d.name || "Unknown");
+          deathsBySquad.set(key, agg);
+        }
+        for (const [key, agg] of deathsBySquad.entries()) {
+          const hist = squadDeathHistory.get(key) || [];
+          hist.push({ ts, deaths: agg.deaths, names: new Set(agg.names) });
+          const pruned = hist.filter((x) => (ts - x.ts) <= RAPID_SQUAD_WIPE_WINDOW_SEC);
+          squadDeathHistory.set(key, pruned);
+          let totalDeaths = 0;
+          const uniq = new Set();
+          for (const item of pruned) {
+            totalDeaths += Number(item.deaths || 0);
+            for (const n of item.names || []) uniq.add(n);
+          }
+          const lastAt = lastWipeAt.get(key);
+          const ready = (lastAt == null) || ((ts - lastAt) > (RAPID_SQUAD_WIPE_WINDOW_SEC / 2));
+          if (ready && totalDeaths >= RAPID_SQUAD_WIPE_DEATHS && uniq.size >= 2) {
+            out.push({
+              index: i,
+              kind: "wipe",
+              label: "W",
+              title: `Rapid squad wipe: ${agg.squad} (${agg.team}) ${totalDeaths} deaths / ${uniq.size} players in ${RAPID_SQUAD_WIPE_WINDOW_SEC}s`,
+            });
+            lastWipeAt.set(key, ts);
+          }
+        }
+
+        const prevObj = extractObjectiveLabel(prev);
+        const currObj = extractObjectiveLabel(curr);
+        if (prevObj && currObj && prevObj !== currObj) {
           out.push({
             index: i,
-            kind: "tank",
-            label: "T",
-            title: `Tank commander death: ${name} (+${dd} death${dd > 1 ? "s" : ""})`,
+            kind: "objective",
+            label: "O",
+            title: `Objective/sector changed: ${prevObj} -> ${currObj}`,
           });
+        } else {
+          const swing = detectObjectiveSwingDelta(prev, curr);
+          if (swing) {
+            out.push({
+              index: i,
+              kind: "objective",
+              label: "O",
+              title: `Objective/sector swing heuristic: Allies ${swing.dA >= 0 ? "+" : ""}${swing.dA}, Axis ${swing.dX >= 0 ? "+" : ""}${swing.dX} (swing ${swing.swing})`,
+            });
+          }
         }
       }
-      if (out.length > 400) {
-        return out.slice(out.length - 400);
+      if (out.length > 600) {
+        return out.slice(out.length - 600);
       }
       return out;
     }
@@ -812,7 +1200,7 @@
       }
       const events = state.replayTimelineEvents || [];
       if (!events.length) {
-        wrap.innerHTML = `<span class="empty">No score-jump or tank-commander-death markers detected in this replay.</span>`;
+        wrap.innerHTML = `<span class="empty">No score/tank/multikill/wipe/objective markers detected in this replay.</span>`;
         return;
       }
       const denom = Math.max(1, state.replayFrames.length - 1);
@@ -831,10 +1219,171 @@
       }
     }
 
+    function makeTeamLabel(team) {
+      const t = String(team || "").trim().toLowerCase();
+      if (t === "allies") return "Allies";
+      if (t === "axis") return "Axis";
+      return t || "Unknown";
+    }
+
+    function buildAutoExportSummary() {
+      const frames = state.replayFrames || [];
+      const timelineEvents = state.replayTimelineEvents || [];
+      const frameCount = frames.length;
+      const replayId = String($("replaySelect")?.value || "").trim() || "replay";
+      const mapName = String(frames[0]?.map_name || state.frame?.map_name || "UNKNOWN MAP");
+      const startedAt = frames[0]?.ts_iso || "";
+      const endedAt = frames[frameCount - 1]?.ts_iso || "";
+      const durationSec = (() => {
+        if (!frameCount) return 0;
+        const a = frameUnix(frames[0]);
+        const b = frameUnix(frames[frameCount - 1]);
+        if (Number.isFinite(a) && Number.isFinite(b) && b >= a) return Math.floor(b - a);
+        return 0;
+      })();
+
+      const last = frames[frameCount - 1] || {};
+      const score = {
+        allies: Number.isFinite(Number(last.allies_score)) ? Number(last.allies_score) : null,
+        axis: Number.isFinite(Number(last.axis_score)) ? Number(last.axis_score) : null,
+      };
+
+      const latestByPlayer = new Map();
+      for (const f of frames) {
+        for (const p of (f.players || [])) {
+          latestByPlayer.set(playerIdentityKey(p), p);
+        }
+      }
+      const players = [...latestByPlayer.values()];
+      const topKills = [...players]
+        .sort((a, b) => Number(b.kills || 0) - Number(a.kills || 0))
+        .slice(0, 10)
+        .map((p) => ({
+          name: p.name || "Unknown",
+          team: p.team || "",
+          role: p.role || "",
+          squad: p.squad || "",
+          kills: Number(p.kills || 0),
+          deaths: Number(p.deaths || 0),
+        }));
+
+      const roles = {};
+      for (const p of players) {
+        const role = roleFilterLabel(p.role);
+        roles[role] = (roles[role] || 0) + 1;
+      }
+
+      const markerCounts = {};
+      for (const ev of timelineEvents) {
+        const k = String(ev.kind || "other");
+        markerCounts[k] = (markerCounts[k] || 0) + 1;
+      }
+
+      return {
+        generated_at_iso: new Date().toISOString(),
+        replay_id: replayId,
+        map_name: mapName,
+        frame_count: frameCount,
+        duration_sec: durationSec,
+        started_at_iso: startedAt,
+        ended_at_iso: endedAt,
+        final_score: score,
+        marker_counts: markerCounts,
+        filters_snapshot: getFilterSnapshot(),
+        top_players_by_kills: topKills,
+        role_distribution: roles,
+        timeline_events: timelineEvents.map((ev) => ({
+          index: ev.index,
+          kind: ev.kind,
+          label: ev.label,
+          title: ev.title,
+          ts_unix: frameUnix(frames[ev.index]),
+          ts_iso: frames[ev.index]?.ts_iso || "",
+          replay_elapsed: formatReplayElapsed(frames[ev.index], state.replayStartUnix),
+        })),
+      };
+    }
+
+    function escapeCsv(value) {
+      const s = String(value ?? "");
+      if (/[",\n]/.test(s)) return `"${s.replace(/"/g, "\"\"")}"`;
+      return s;
+    }
+
+    function buildAutoExportCsv(summary) {
+      const rows = [];
+      rows.push(["replay_id", summary.replay_id]);
+      rows.push(["map_name", summary.map_name]);
+      rows.push(["frame_count", summary.frame_count]);
+      rows.push(["duration_sec", summary.duration_sec]);
+      rows.push(["final_allies_score", summary.final_score?.allies ?? ""]);
+      rows.push(["final_axis_score", summary.final_score?.axis ?? ""]);
+      rows.push(["generated_at_iso", summary.generated_at_iso]);
+      rows.push([]);
+      rows.push(["timeline_index", "elapsed", "kind", "label", "title", "ts_iso"]);
+      for (const ev of summary.timeline_events || []) {
+        rows.push([ev.index, ev.replay_elapsed, ev.kind, ev.label, ev.title, ev.ts_iso]);
+      }
+      rows.push([]);
+      rows.push(["top_player_name", "team", "role", "squad", "kills", "deaths"]);
+      for (const p of summary.top_players_by_kills || []) {
+        rows.push([p.name, p.team, p.role, p.squad, p.kills, p.deaths]);
+      }
+      return rows.map((r) => r.map(escapeCsv).join(",")).join("\n");
+    }
+
+    function downloadTextFile(filename, text, contentType = "text/plain;charset=utf-8") {
+      const blob = new Blob([text], { type: contentType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    function exportAutoAar() {
+      if (!state.replayFrames.length) {
+        setStatus("Load a replay before exporting.");
+        return;
+      }
+      const summary = buildAutoExportSummary();
+      const safeId = String(summary.replay_id || "replay").replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const stamp = new Date().toISOString().replace(/[:]/g, "-");
+      const jsonName = `${safeId}_aar_${stamp}.json`;
+      const csvName = `${safeId}_timeline_${stamp}.csv`;
+      downloadTextFile(jsonName, JSON.stringify(summary, null, 2), "application/json;charset=utf-8");
+      downloadTextFile(csvName, buildAutoExportCsv(summary), "text/csv;charset=utf-8");
+      setStatus(`Auto export complete: ${jsonName} + ${csvName}`);
+    }
+
+    function connectFilterPresetControls() {
+      const applyBtn = $("applyPresetBtn");
+      const saveBtn = $("savePresetBtn");
+      const deleteBtn = $("deletePresetBtn");
+      const clearBtn = $("clearPresetBtn");
+      const presetSel = $("filterPresetSelect");
+
+      if (applyBtn) applyBtn.addEventListener("click", applySelectedFilterPreset);
+      if (saveBtn) saveBtn.addEventListener("click", saveCurrentFilterPreset);
+      if (deleteBtn) deleteBtn.addEventListener("click", deleteSelectedFilterPreset);
+      if (clearBtn) clearBtn.addEventListener("click", clearAllFilters);
+      if (presetSel) {
+        presetSel.addEventListener("change", () => {
+          const v = String(presetSel.value || "").trim();
+          if ($("filterPresetName")) $("filterPresetName").value = v;
+        });
+      }
+      refreshFilterPresetSelect();
+    }
+
     function refreshRenderedFrame() {
       if (!state.frame) return;
       drawFrame(state.frame);
       renderRoster(state.frame);
+      renderVehicleSummary(state.frame);
       renderReplayTimeline();
     }
 
@@ -989,15 +1538,32 @@
         const eventName = id === "searchFilter" ? "input" : "change";
         el.addEventListener(eventName, () => refreshRenderedFrame());
       }
-      const clearBtn = $("clearSelectedPlayerBtn");
-      if (clearBtn) {
-        clearBtn.addEventListener("click", () => {
+      const clearSelectedBtn = $("clearSelectedPlayerBtn");
+      if (clearSelectedBtn) {
+        clearSelectedBtn.addEventListener("click", () => {
           state.selectedPlayerName = "";
           state.selectedPlayerTeam = "";
           updateSelectedPlayerLabel();
           refreshRenderedFrame();
         });
       }
+      const applyBtn = $("applyPresetBtn");
+      const saveBtn = $("savePresetBtn");
+      const deleteBtn = $("deletePresetBtn");
+      const clearFiltersBtn = $("clearPresetBtn");
+      const presetSelect = $("filterPresetSelect");
+      const exportBtn = $("exportAarBtn");
+      if (applyBtn) applyBtn.addEventListener("click", applySelectedFilterPreset);
+      if (saveBtn) saveBtn.addEventListener("click", saveCurrentFilterPreset);
+      if (deleteBtn) deleteBtn.addEventListener("click", deleteSelectedFilterPreset);
+      if (clearFiltersBtn) clearFiltersBtn.addEventListener("click", clearAllFilters);
+      if (presetSelect) {
+        presetSelect.addEventListener("change", () => {
+          const v = String(presetSelect.value || "");
+          if ($("filterPresetName")) $("filterPresetName").value = v;
+        });
+      }
+      if (exportBtn) exportBtn.addEventListener("click", exportAutoAar);
       const timeline = $("eventTimeline");
       if (timeline) {
         timeline.addEventListener("click", (ev) => {
@@ -1829,9 +2395,11 @@
       addEvents(diffEvents(prev, frame));
       if (state.mode === "live") updateLiveHistory(frame);
       updateFilterOptions(frame);
+      refreshFilterPresetSelect($("filterPresetSelect")?.value || "");
       resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
+      renderVehicleSummary(frame);
       renderReplayTimeline();
       state.lastFrame = frame;
     }
@@ -2055,6 +2623,8 @@
       $("liveModeBtn").onclick = () => setMode("live");
       $("replayModeBtn").onclick = () => setMode("replay");
       $("loadReplayBtn").onclick = async () => { try { await loadReplay(); } catch (e) { setStatus(e.message); } };
+      const exportBtn = $("exportAarBtn");
+      if (exportBtn) exportBtn.onclick = exportAutoAar;
       $("playBtn").onclick = playReplay;
       $("pauseBtn").onclick = pauseReplay;
       $("timeline").oninput = (e) => showReplayIndex(Number(e.target.value));
@@ -2071,7 +2641,10 @@
         });
       });
 
+      connectFilterPresetControls();
       await loadConfig();
+      refreshFilterPresetSelect("");
+      renderVehicleSummary(null);
       await refreshReplays();
       setMode("live");
       pollLive();
