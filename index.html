@@ -289,11 +289,33 @@
       "saintemariedumont",
       "sainte_marie_du_mont",
     ]);
+    // Playable-area world bounds calibration from user-provided corner anchors:
+    // - Horizontal sample map: Carentan (A3/J3/A8/J8)
+    // - Vertical sample map: Remagen (C1/H1/C10/H10)
+    // These are used as deterministic templates to avoid per-session stretch drift.
+    const HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS = {
+      horizontal: {
+        xMin: -98329.9921875,
+        xMax: 98578.9921875,
+        yMin: -60479.3203125,
+        yMax: 60478.5625,
+      },
+      vertical: {
+        xMin: -59515.375,
+        xMax: 59518.8125,
+        yMin: -96655.078125,
+        yMax: 97554.9140625,
+      },
+    };
+    const HLL_MAP_PLAYABLE_WORLD_BOUNDS_PRESETS = {
+      carentan: HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.horizontal,
+      remagen: HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.vertical,
+    };
     // Player projection orientation presets for maps that need a hard lock.
     // This is separate from map image view flips.
     const HLL_MAP_PROJECTION_PRESETS = {
-      // User-reported: SME map image right-side up, but players were vertically inverted.
-      sme: { flip_y: false, swap_xy: false },
+      // Keep player projection un-rotated unless explicitly overridden.
+      sme: { flip_x: false, flip_y: false, swap_xy: false },
     };
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
@@ -649,6 +671,23 @@
       return null;
     }
 
+    function getPlayableWorldBoundsPresetForFrame(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      for (const slug of slugs) {
+        const direct = HLL_MAP_PLAYABLE_WORLD_BOUNDS_PRESETS[slug];
+        if (direct) return { ...direct };
+      }
+      for (const slug of slugs) {
+        if (HLL_MAP_HORIZONTAL_SLUGS.has(slug)) {
+          return { ...HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.horizontal };
+        }
+        if (HLL_MAP_VERTICAL_SLUGS.has(slug)) {
+          return { ...HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.vertical };
+        }
+      }
+      return null;
+    }
+
     function getProjectionPresetForFrame(frame) {
       const slugs = getMapSlugCandidates(frame);
       for (const slug of slugs) {
@@ -775,6 +814,9 @@
     }
 
     function estimateHllTargetBounds(frame, points) {
+      const playableWorldPreset = getPlayableWorldBoundsPresetForFrame(frame);
+      if (playableWorldPreset) return playableWorldPreset;
+
       // Prefer map preset playable cells when available.
       const presetRect = getMapPlayableRectPreset(frame);
       const presetBounds = worldBoundsFromPlayableRect(presetRect);
@@ -1216,7 +1258,12 @@
         setStatus(`Configured/API bounds look invalid (${Math.round(ratio * 100)}% out of bounds). Using auto bounds.`);
       }
 
-      // Fixed HLL world bounds: center at 0,0 with 20000 units per grid cell.
+      const playableWorldPreset = getPlayableWorldBoundsPresetForFrame(frame);
+      if (playableWorldPreset) {
+        return { ...playableWorldPreset, source: "hll-playable-preset" };
+      }
+
+      // Fixed HLL world bounds fallback centered at 0,0.
       return {
         xMin: HLL_WORLD_MIN,
         xMax: HLL_WORLD_MAX,
