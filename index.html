@@ -118,7 +118,7 @@
     }
     .right {
       display: grid;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto auto auto 1fr;
       gap: 12px;
       min-height: 0;
     }
@@ -138,6 +138,83 @@
     .tag { font-size: 11px; color: var(--muted); }
     .team-allies { color: var(--blue); }
     .team-axis { color: var(--red); }
+    .timeline-wrap {
+      margin-top: 2px;
+      display: grid;
+      gap: 6px;
+    }
+    .event-timeline {
+      position: relative;
+      height: 26px;
+      border: 1px solid #1f3b27;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #08140d 0%, #07110a 100%);
+      overflow: hidden;
+    }
+    .event-timeline .empty {
+      position: absolute;
+      left: 8px;
+      top: 5px;
+      font-size: 11px;
+      color: #6d967a;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      max-width: calc(100% - 16px);
+    }
+    .event-marker {
+      position: absolute;
+      top: 3px;
+      transform: translateX(-50%);
+      min-width: 8px;
+      height: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 0 2px;
+      font-size: 9px;
+      color: #041006;
+      font-weight: 700;
+      line-height: 16px;
+      text-align: center;
+      opacity: 0.88;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    }
+    .event-marker.score { background: #4edc7a; }
+    .event-marker.tank { background: #ff8a80; }
+    .event-marker.active {
+      opacity: 1;
+      outline: 1px solid rgba(255, 255, 255, 0.75);
+    }
+    .filter-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .filter-col {
+      display: grid;
+      gap: 4px;
+    }
+    .multi-select {
+      width: 100%;
+      min-height: 84px;
+      padding: 4px;
+      font-size: 11px;
+      background: #0a130d;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .selected-player {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 220px;
+      display: inline-block;
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body>
@@ -192,6 +269,24 @@
         <button id="pauseBtn">Pause</button>
         <input id="timeline" type="range" min="0" max="0" value="0" />
       </div>
+      <div class="row">
+        <label class="small"><input id="heatmapEnabled" type="checkbox" /> Heatmap</label>
+        <select id="heatmapWindowMin" style="max-width:110px">
+          <option value="5">5m</option>
+          <option value="10">10m</option>
+          <option value="25" selected>25m</option>
+          <option value="50">50m</option>
+          <option value="75">75m</option>
+          <option value="90">90m</option>
+        </select>
+        <label class="small"><input id="breadcrumbsEnabled" type="checkbox" /> Breadcrumbs</label>
+        <span id="selectedPlayer" class="selected-player">Selected: none</span>
+        <button id="clearSelectedPlayerBtn">Clear</button>
+      </div>
+      <div class="timeline-wrap">
+        <div class="tag">Replay timeline (TC deaths + score jumps)</div>
+        <div id="eventTimeline" class="event-timeline"><span class="empty">Load a replay to build timeline markers.</span></div>
+      </div>
       <div class="status" id="status">Ready.</div>
     </div>
   </div>
@@ -215,6 +310,22 @@
       <div class="card events">
         <div class="tag">Recent actions</div>
         <div id="events"></div>
+      </div>
+      <div class="card">
+        <div class="tag">Filters (hide non-selected)</div>
+        <div class="row">
+          <input id="searchFilter" placeholder="Search name/role/squad" />
+        </div>
+        <div class="filter-grid">
+          <div class="filter-col">
+            <span class="small">Roles</span>
+            <select id="roleFilter" class="multi-select" multiple></select>
+          </div>
+          <div class="filter-col">
+            <span class="small">Squads</span>
+            <select id="squadFilter" class="multi-select" multiple></select>
+          </div>
+        </div>
       </div>
       <div class="card roster">
         <div class="tag">Players this frame</div>
@@ -379,6 +490,11 @@
       lastFrame: null,
       mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
       mapVisualCache: {},
+      liveHistory: [],
+      replayTimelineEvents: [],
+      selectedPlayerName: "",
+      selectedPlayerTeam: "",
+      lastDrawMeta: null,
     };
 
     async function api(path, options = {}) {
@@ -447,6 +563,412 @@
       if (!events.length) return;
       state.events = [...events, ...state.events].slice(0, 60);
       $("events").innerHTML = state.events.map(e => `<div class="event">${e}</div>`).join("");
+    }
+
+    function playerNameKey(name) {
+      return String(name || "").trim().toLowerCase();
+    }
+
+    function roleFilterLabel(role) {
+      const s = String(role || "").trim();
+      return s || "Unknown";
+    }
+
+    function squadFilterLabel(squad) {
+      const s = String(squad || "").trim();
+      return s || "No Squad";
+    }
+
+    function readSelectedMultiValues(selectId) {
+      const el = $(selectId);
+      if (!el) return new Set();
+      return new Set(Array.from(el.selectedOptions || []).map((o) => o.value));
+    }
+
+    function getPlayerFilterState() {
+      return {
+        search: String($("searchFilter")?.value || "").trim().toLowerCase(),
+        roles: readSelectedMultiValues("roleFilter"),
+        squads: readSelectedMultiValues("squadFilter"),
+      };
+    }
+
+    function playerMatchesFilters(player, filterState) {
+      const f = filterState || getPlayerFilterState();
+      const role = roleFilterLabel(player?.role);
+      const squad = squadFilterLabel(player?.squad);
+      if (f.roles.size && !f.roles.has(role)) return false;
+      if (f.squads.size && !f.squads.has(squad)) return false;
+      if (f.search) {
+        const hay = [
+          String(player?.name || ""),
+          String(player?.role || ""),
+          String(player?.squad || ""),
+          String(player?.team || ""),
+        ].join(" ").toLowerCase();
+        if (!hay.includes(f.search)) return false;
+      }
+      return true;
+    }
+
+    function getDisplayedPlayers(frame, filterState = null) {
+      const players = frame?.players || [];
+      const f = filterState || getPlayerFilterState();
+      return players.filter((p) => playerMatchesFilters(p, f));
+    }
+
+    function refillMultiSelect(selectId, values) {
+      const el = $(selectId);
+      if (!el) return;
+      const prevSelected = readSelectedMultiValues(selectId);
+      const sorted = [...values].sort((a, b) => a.localeCompare(b));
+      el.innerHTML = "";
+      for (const v of sorted) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        if (prevSelected.has(v)) opt.selected = true;
+        el.appendChild(opt);
+      }
+    }
+
+    function updateFilterOptions(frame) {
+      const players = frame?.players || [];
+      const roles = new Set(players.map((p) => roleFilterLabel(p?.role)));
+      const squads = new Set(players.map((p) => squadFilterLabel(p?.squad)));
+      refillMultiSelect("roleFilter", roles);
+      refillMultiSelect("squadFilter", squads);
+    }
+
+    function updateSelectedPlayerLabel() {
+      const el = $("selectedPlayer");
+      if (!el) return;
+      if (!state.selectedPlayerName) {
+        el.textContent = "Selected: none";
+        return;
+      }
+      const team = String(state.selectedPlayerTeam || "").trim();
+      const suffix = team ? ` (${team})` : "";
+      el.textContent = `Selected: ${state.selectedPlayerName}${suffix}`;
+    }
+
+    function normalizeRoleForCompare(role) {
+      return String(role || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    }
+
+    function isTankCommanderRole(role) {
+      return normalizeRoleForCompare(role) === "tankcommander";
+    }
+
+    function playerIdentityKey(player) {
+      const name = playerNameKey(player?.name);
+      const team = String(player?.team || "").trim().toLowerCase();
+      return `${name}|${team}`;
+    }
+
+    function frameUnix(frame) {
+      const ts = Number(frame?.ts_unix);
+      if (Number.isFinite(ts)) return ts;
+      if (frame?.ts_iso) {
+        const d = new Date(frame.ts_iso);
+        const n = d.getTime();
+        if (!Number.isNaN(n)) return n / 1000;
+      }
+      return null;
+    }
+
+    function getPrimaryMapSlug(frame) {
+      const candidates = getMapSlugCandidates(frame);
+      return candidates[0] || "";
+    }
+
+    function updateLiveHistory(frame) {
+      if (!frame || typeof frame !== "object") return;
+      state.liveHistory.push(frame);
+      if (state.liveHistory.length > 6000) {
+        state.liveHistory.splice(0, state.liveHistory.length - 6000);
+      }
+    }
+
+    function getHistoryFramesForWindow(currentFrame) {
+      const source = (state.mode === "replay" && state.replayFrames.length)
+        ? state.replayFrames.slice(0, state.replayIndex + 1)
+        : state.liveHistory;
+      if (!source.length) return [];
+      const currentTs = frameUnix(currentFrame);
+      const minsRaw = Number($("heatmapWindowMin")?.value || 25);
+      const mins = Number.isFinite(minsRaw) ? Math.max(1, minsRaw) : 25;
+      let filtered = source;
+      if (Number.isFinite(currentTs)) {
+        const cutoff = currentTs - (mins * 60);
+        filtered = source.filter((f) => {
+          const ts = frameUnix(f);
+          return !Number.isFinite(ts) || ts >= cutoff;
+        });
+      }
+      const curMap = getPrimaryMapSlug(currentFrame);
+      if (curMap) {
+        filtered = filtered.filter((f) => getPrimaryMapSlug(f) === curMap);
+      }
+      if (filtered.length > 900) {
+        const step = Math.ceil(filtered.length / 900);
+        filtered = filtered.filter((_, idx) => idx % step === 0 || idx === filtered.length - 1);
+      }
+      return filtered;
+    }
+
+    function buildReplayTimelineEvents(frames) {
+      if (!Array.isArray(frames) || frames.length < 2) return [];
+      const out = [];
+      for (let i = 1; i < frames.length; i++) {
+        const prev = frames[i - 1] || {};
+        const curr = frames[i] || {};
+        const prevA = Number(prev.allies_score);
+        const prevX = Number(prev.axis_score);
+        const currA = Number(curr.allies_score);
+        const currX = Number(curr.axis_score);
+        if (
+          Number.isFinite(prevA) && Number.isFinite(prevX) &&
+          Number.isFinite(currA) && Number.isFinite(currX) &&
+          (currA !== prevA || currX !== prevX)
+        ) {
+          out.push({
+            index: i,
+            kind: "score",
+            label: "S",
+            title: `Score jump: ${prevA}-${prevX} -> ${currA}-${currX}`,
+          });
+        }
+
+        const prevPlayers = new Map((prev.players || []).map((p) => [playerIdentityKey(p), p]));
+        for (const p of (curr.players || [])) {
+          const old = prevPlayers.get(playerIdentityKey(p));
+          if (!old) continue;
+          const dd = Number(p.deaths || 0) - Number(old.deaths || 0);
+          if (dd <= 0) continue;
+          if (!isTankCommanderRole(old.role) && !isTankCommanderRole(p.role)) continue;
+          const name = p.name || old.name || "Unknown";
+          out.push({
+            index: i,
+            kind: "tank",
+            label: "T",
+            title: `Tank commander death: ${name} (+${dd} death${dd > 1 ? "s" : ""})`,
+          });
+        }
+      }
+      if (out.length > 400) {
+        return out.slice(out.length - 400);
+      }
+      return out;
+    }
+
+    function renderReplayTimeline() {
+      const wrap = $("eventTimeline");
+      if (!wrap) return;
+      wrap.innerHTML = "";
+      if (state.mode !== "replay" || !state.replayFrames.length) {
+        wrap.innerHTML = `<span class="empty">Load a replay to build timeline markers.</span>`;
+        return;
+      }
+      const events = state.replayTimelineEvents || [];
+      if (!events.length) {
+        wrap.innerHTML = `<span class="empty">No score-jump or tank-commander-death markers detected in this replay.</span>`;
+        return;
+      }
+      const denom = Math.max(1, state.replayFrames.length - 1);
+      for (const ev of events) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `event-marker ${ev.kind}${ev.index === state.replayIndex ? " active" : ""}`;
+        const pct = (Math.max(0, Math.min(denom, ev.index)) / denom) * 100;
+        btn.style.left = `${Math.max(1, Math.min(99, pct))}%`;
+        const frame = state.replayFrames[ev.index];
+        const elapsed = formatReplayElapsed(frame, state.replayStartUnix);
+        btn.title = `${ev.title} @ ${elapsed}`;
+        btn.textContent = ev.label;
+        btn.dataset.index = String(ev.index);
+        wrap.appendChild(btn);
+      }
+    }
+
+    function refreshRenderedFrame() {
+      if (!state.frame) return;
+      drawFrame(state.frame);
+      renderRoster(state.frame);
+      renderReplayTimeline();
+    }
+
+    function worldToScreen(worldPos, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale) {
+      const wp = projectWorld(worldPos, frame);
+      if (!wp || !bounds || !playableViewport) return null;
+      const rawX = playableViewport.x + project(wp.x, bounds.xMin, bounds.xMax, playableViewport.w);
+      const rawY = playableViewport.y + project(wp.y, bounds.yMin, bounds.yMax, playableViewport.h);
+      const x = mapCenterX + ((rawX - mapCenterX) * zoomScale);
+      const y = mapCenterY + ((rawY - mapCenterY) * zoomScale);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return { x, y, wp };
+    }
+
+    function drawHeatmapOverlay(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale, filterState) {
+      if (!$("heatmapEnabled")?.checked) return;
+      const history = getHistoryFramesForWindow(frame);
+      if (!history.length) return;
+      const cols = 56;
+      const rows = 56;
+      const bins = new Uint16Array(cols * rows);
+      let maxBin = 0;
+      for (const f of history) {
+        for (const p of getDisplayedPlayers(f, filterState)) {
+          const s = worldToScreen(p.world_position, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+          if (!s) continue;
+          const nx = (s.wp.x - bounds.xMin) / Math.max(1e-9, bounds.xMax - bounds.xMin);
+          const ny = (s.wp.y - bounds.yMin) / Math.max(1e-9, bounds.yMax - bounds.yMin);
+          if (nx < 0 || nx > 1 || ny < 0 || ny > 1) continue;
+          const xi = Math.max(0, Math.min(cols - 1, Math.floor(nx * cols)));
+          const yi = Math.max(0, Math.min(rows - 1, Math.floor(ny * rows)));
+          const idx = yi * cols + xi;
+          bins[idx] += 1;
+          if (bins[idx] > maxBin) maxBin = bins[idx];
+        }
+      }
+      if (maxBin <= 0) return;
+      const cellW = (playableViewport.w / cols) * zoomScale;
+      const cellH = (playableViewport.h / rows) * zoomScale;
+      if (cellW <= 0 || cellH <= 0) return;
+      ctx.save();
+      for (let yi = 0; yi < rows; yi++) {
+        for (let xi = 0; xi < cols; xi++) {
+          const count = bins[yi * cols + xi];
+          if (!count) continue;
+          const intensity = Math.pow(count / maxBin, 0.58);
+          const alpha = 0.05 + (0.4 * intensity);
+          const rawX = playableViewport.x + ((xi / cols) * playableViewport.w);
+          const rawY = playableViewport.y + ((yi / rows) * playableViewport.h);
+          const x = mapCenterX + ((rawX - mapCenterX) * zoomScale);
+          const y = mapCenterY + ((rawY - mapCenterY) * zoomScale);
+          ctx.fillStyle = `rgba(255, 136, 44, ${alpha.toFixed(3)})`;
+          ctx.fillRect(x, y, cellW + 0.25, cellH + 0.25);
+        }
+      }
+      ctx.restore();
+    }
+
+    function selectedPlayerMatches(player) {
+      if (!state.selectedPlayerName) return false;
+      const nameOk = playerNameKey(player?.name) === playerNameKey(state.selectedPlayerName);
+      if (!nameOk) return false;
+      if (!state.selectedPlayerTeam) return true;
+      return String(player?.team || "").trim().toLowerCase() === String(state.selectedPlayerTeam || "").trim().toLowerCase();
+    }
+
+    function getSelectedPlayerTrackPoints(frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale) {
+      if (!state.selectedPlayerName) return [];
+      const source = (state.mode === "replay" && state.replayFrames.length)
+        ? state.replayFrames.slice(0, state.replayIndex + 1)
+        : getHistoryFramesForWindow(frame);
+      if (!source.length) return [];
+      const mapSlug = getPrimaryMapSlug(frame);
+      const out = [];
+      for (const f of source) {
+        if (mapSlug && getPrimaryMapSlug(f) !== mapSlug) continue;
+        for (const p of (f.players || [])) {
+          if (!selectedPlayerMatches(p)) continue;
+          const s = worldToScreen(p.world_position, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+          if (s) out.push({ x: s.x, y: s.y });
+          break;
+        }
+      }
+      return out;
+    }
+
+    function drawBreadcrumbTrail(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale) {
+      if (!$("breadcrumbsEnabled")?.checked) return;
+      const points = getSelectedPlayerTrackPoints(frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+      if (points.length < 2) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      const stride = Math.max(4, Math.floor(points.length / 35));
+      for (let i = 0; i < points.length; i += stride) {
+        const pt = points[i];
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+        ctx.fill();
+      }
+      const tail = points[points.length - 1];
+      ctx.beginPath();
+      ctx.arc(tail.x, tail.y, 4.2, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function findNearestProjectedPlayer(mx, my, maxDist = 12) {
+      let best = null;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const node of state.projected || []) {
+        const dx = node.x - mx;
+        const dy = node.y - my;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < bestDist) {
+          bestDist = d;
+          best = node;
+        }
+      }
+      if (!best || bestDist > maxDist) return null;
+      return best;
+    }
+
+    function bindCanvasSelection() {
+      const canvas = $("mapCanvas");
+      if (!canvas) return;
+      canvas.addEventListener("click", (ev) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = ev.clientX - rect.left;
+        const my = ev.clientY - rect.top;
+        const node = findNearestProjectedPlayer(mx, my, 14);
+        if (!node) return;
+        state.selectedPlayerName = node.p?.name || "";
+        state.selectedPlayerTeam = node.p?.team || "";
+        updateSelectedPlayerLabel();
+        refreshRenderedFrame();
+      });
+    }
+
+    function bindFeatureControls() {
+      const controls = ["heatmapEnabled", "heatmapWindowMin", "breadcrumbsEnabled", "searchFilter", "roleFilter", "squadFilter"];
+      for (const id of controls) {
+        const el = $(id);
+        if (!el) continue;
+        const eventName = id === "searchFilter" ? "input" : "change";
+        el.addEventListener(eventName, () => refreshRenderedFrame());
+      }
+      const clearBtn = $("clearSelectedPlayerBtn");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+          state.selectedPlayerName = "";
+          state.selectedPlayerTeam = "";
+          updateSelectedPlayerLabel();
+          refreshRenderedFrame();
+        });
+      }
+      const timeline = $("eventTimeline");
+      if (timeline) {
+        timeline.addEventListener("click", (ev) => {
+          const marker = ev.target.closest(".event-marker");
+          if (!marker) return;
+          if (state.mode !== "replay") return;
+          const idx = Number(marker.dataset.index);
+          if (!Number.isFinite(idx)) return;
+          showReplayIndex(idx);
+        });
+      }
     }
 
     function normalizeMapView(raw) {
@@ -1082,8 +1604,10 @@
       $("mapName").textContent = frame.map_name || "UNKNOWN MAP";
       const ts = formatReplayTime(frame);
       const replayElapsed = formatReplayElapsed(frame, state.replayStartUnix);
-      const players = frame.players || [];
-      const bounds = getRenderBounds(frame, players);
+      const allPlayers = frame.players || [];
+      const filterState = getPlayerFilterState();
+      const players = getDisplayedPlayers(frame, filterState);
+      const bounds = getRenderBounds(frame, allPlayers);
       const boundsSrc = bounds ? (bounds.source || "auto") : "none";
       const mapView = normalizeMapView(frame.map_view || null);
       const playerView = normalizePlayerView(frame.player_view || null);
@@ -1096,7 +1620,7 @@
       if (mapView.flip_x) mapViewFlags.push("mapFlipX");
       if (mapView.flip_y) mapViewFlags.push("mapFlipY");
       const projInfo = `players:${projFlags.join("+") || "none"} view:${mapViewFlags.join("+") || "none"} zoom:${zoom.scale.toFixed(2)}x`;
-      $("frameInfo").textContent = `${players.length} players · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()} · ${projInfo}`;
+      $("frameInfo").textContent = `${players.length}/${allPlayers.length} shown · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()} · ${projInfo}`;
       const alliedScore = Number.isFinite(Number(frame.allies_score)) ? Number(frame.allies_score) : null;
       const axisScore = Number.isFinite(Number(frame.axis_score)) ? Number(frame.axis_score) : null;
       const scoreTxt = (alliedScore !== null || axisScore !== null)
@@ -1115,13 +1639,15 @@
       const playableViewport = getPlayableViewport(viewport);
       const mapCenterX = viewport.x + (viewport.w * zoom.centerXNorm);
       const mapCenterY = viewport.y + (viewport.h * zoom.centerYNorm);
+      const zoomScale = zoom.scale;
+      state.lastDrawMeta = { bounds, playableViewport, mapCenterX, mapCenterY, zoomScale };
 
       if (state.mapVisual.status === "ready" && state.mapVisual.img) {
         ctx.save();
-        if (zoom.scale > 1.0001) {
+        if (zoomScale > 1.0001) {
           // >1 means zoom in (magnify map around chosen center).
           ctx.translate(mapCenterX, mapCenterY);
-          ctx.scale(zoom.scale, zoom.scale);
+          ctx.scale(zoomScale, zoomScale);
           ctx.translate(-mapCenterX, -mapCenterY);
         }
         if (mapView.flip_x || mapView.flip_y) {
@@ -1139,6 +1665,16 @@
         ctx.restore();
       }
 
+      state.projected = [];
+      if (!bounds) {
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.font = "14px Arial";
+        ctx.fillText("No usable world_position/map bounds in this frame.", 16, 24);
+        return;
+      }
+
+      drawHeatmapOverlay(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale, filterState);
+
       // grid
       ctx.strokeStyle = "rgba(255,255,255,0.07)";
       for (let x = playableViewport.x; x <= playableViewport.x + playableViewport.w; x += 64) {
@@ -1148,22 +1684,13 @@
         ctx.beginPath(); ctx.moveTo(playableViewport.x, y); ctx.lineTo(playableViewport.x + playableViewport.w, y); ctx.stroke();
       }
 
-      state.projected = [];
-      if (!bounds) {
-        ctx.fillStyle = "rgba(255,255,255,0.5)";
-        ctx.font = "14px Arial";
-        ctx.fillText("No usable world_position/map bounds in this frame.", 16, 24);
-        return;
-      }
+      drawBreadcrumbTrail(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
 
       for (const p of players) {
-        const w = p.world_position;
-        const wp = projectWorld(w, frame);
-        if (!wp) continue;
-        const rawX = playableViewport.x + project(wp.x, bounds.xMin, bounds.xMax, playableViewport.w);
-        const rawY = playableViewport.y + project(wp.y, bounds.yMin, bounds.yMax, playableViewport.h);
-        const x = mapCenterX + ((rawX - mapCenterX) * zoom.scale);
-        const y = mapCenterY + ((rawY - mapCenterY) * zoom.scale);
+        const s = worldToScreen(p.world_position, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+        if (!s) continue;
+        const x = s.x;
+        const y = s.y;
         const axis = String(p.team || "").toLowerCase().includes("axis");
         const color = axis ? playerColors.axis : playerColors.allies;
         const isTank = Boolean(p.is_tank_role) || isTankRole(p.role);
@@ -1176,6 +1703,13 @@
           ctx.arc(x, y, 9, 0, Math.PI * 2);
           ctx.strokeStyle = "rgba(255, 215, 0, 0.85)";
           ctx.lineWidth = 1.6;
+          ctx.stroke();
+        }
+        if (selectedPlayerMatches(p)) {
+          ctx.beginPath();
+          ctx.arc(x, y, isTank ? 11.2 : 8.4, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.lineWidth = 1.4;
           ctx.stroke();
         }
         if (p.is_squad_leader) {
@@ -1193,7 +1727,12 @@
     }
 
     function renderRoster(frame) {
-      const players = [...(frame.players || [])].sort((a, b) => (Number(b.kills || 0) - Number(a.kills || 0)));
+      const players = [...getDisplayedPlayers(frame, getPlayerFilterState())]
+        .sort((a, b) => (Number(b.kills || 0) - Number(a.kills || 0)));
+      if (!players.length) {
+        $("roster").innerHTML = `<div class="tag">No players match current filters.</div>`;
+        return;
+      }
       $("roster").innerHTML = players.map(p => {
         const teamClass = String(p.team || "").toLowerCase().includes("axis") ? "team-axis" : "team-allies";
         return `<div class="roster-item">
@@ -1206,9 +1745,12 @@
     function applyFrame(frame, prevOverride = null) {
       const prev = prevOverride !== null ? prevOverride : state.lastFrame;
       addEvents(diffEvents(prev, frame));
+      if (state.mode === "live") updateLiveHistory(frame);
+      updateFilterOptions(frame);
       resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
+      renderReplayTimeline();
       state.lastFrame = frame;
     }
 
@@ -1265,8 +1807,10 @@
       $("timeline").max = Math.max(0, state.replayFrames.length - 1);
       $("timeline").value = 0;
       state.events = [];
-      if (state.replayFrames.length) applyFrame(state.replayFrames[0], null);
       setMode("replay");
+      state.replayTimelineEvents = buildReplayTimelineEvents(state.replayFrames);
+      if (state.replayFrames.length) applyFrame(state.replayFrames[0], null);
+      else renderReplayTimeline();
       setStatus(`Replay loaded: ${id}`);
     }
 
@@ -1304,15 +1848,8 @@
         const rect = canvas.getBoundingClientRect();
         const mx = ev.clientX - rect.left;
         const my = ev.clientY - rect.top;
-        let best = null;
-        let bestDist = 9999;
-        for (const node of state.projected) {
-          const dx = node.x - mx;
-          const dy = node.y - my;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < bestDist) { bestDist = d; best = node; }
-        }
-        if (!best || bestDist > 12) {
+        const best = findNearestProjectedPlayer(mx, my, 12);
+        if (!best) {
           $("hoverName").textContent = "Hover a player dot";
           $("hoverMeta").textContent = "Role / Team / Squad / K:D";
           return;
@@ -1379,7 +1916,10 @@
     async function init() {
       initBrandLogo();
       bindCanvasHover();
+      bindCanvasSelection();
       bindCanvasZoom();
+      bindFeatureControls();
+      updateSelectedPlayerLabel();
       $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
       $("testLiveBtn").onclick = async () => { try { await pollLive(); setStatus("Live fetch OK."); } catch (e) { setStatus(e.message); } };
       $("startRecBtn").onclick = async () => {
@@ -1411,7 +1951,7 @@
           state.frame.player_view = getPlayerViewFromInputs();
           state.frame.player_colors = getPlayerColorsFromInputs();
           state.frame.map_view = getMapViewFromInputs();
-          drawFrame(state.frame);
+          refreshRenderedFrame();
         });
       });
 
