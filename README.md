@@ -24,6 +24,25 @@ Open:
 
 `http://localhost:3100`
 
+## Restore map images quickly (if `maps/` is empty)
+
+If your `maps/` folder was deleted or is empty, run:
+
+```bash
+python3 "download_maps.py"
+```
+
+This downloads base HLL map images from a public source into `maps/` with
+filenames already normalized for this app (for example: `carentan.webp`,
+`remagen.webp`, `sme.webp`, `smdm.webp`, `utah.webp`, `omaha.webp`).
+
+Optional flags:
+
+```bash
+python3 "download_maps.py" --list-only
+python3 "download_maps.py" --overwrite
+```
+
 ## Configure
 
 In the web UI:
