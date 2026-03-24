@@ -5,6 +5,7 @@ Download canonical HLL map images into ./maps for this app.
 Sources:
 - no-grid:     https://github.com/mattwright324/maps-let-loose (assets/no-grid)
 - accessible:  https://github.com/mattwright324/maps-let-loose (assets/accessibility)
+- points:      https://github.com/mattwright324/maps-let-loose (assets/points)
 """
 
 from __future__ import annotations
@@ -71,6 +72,29 @@ SOURCES = {
     },
 }
 
+# local slug -> upstream overlay layers (draw in order)
+POINT_OVERLAY_FILES = {
+    "carentan": ["Carentan_SP_NoMap.png", "Carentan_SP_NoMap2.png"],
+    "driel": ["Driel_SP_NoMap.png", "Driel_SP_NoMap2.png"],
+    "el_alamein": ["ElAlamein_SP_NoMap.png", "ElAlamein_SP_NoMap2.png"],
+    "elsenborn_ridge": ["Elsenborn_SP_NoMap.png", "Elsenborn_SP_NoMap2.png"],
+    "foy": ["Foy_SP_NoMap.png", "Foy_SP_NoMap2.png"],
+    "hill400": ["Hill400_SP_NoMap.png", "Hill400_SP_NoMap2.png"],
+    "hurtgen": ["HurtgenV2_SP_NoMap.png", "HurtgenV2_SP_NoMap2.png"],
+    "kharkov": ["Kharkov_SP_NoMap.png", "Kharkov_SP_NoMap2.png"],
+    "kursk": ["Kursk_SP_NoMap.png", "Kursk_SP_NoMap2.png"],
+    "mortain": ["Mortain_SP_NoMap.png", "Mortain_SP_NoMap2.png"],
+    "omaha": ["Omaha_SP_NoMap.png", "Omaha_SP_NoMap2.png"],
+    "phl": ["PHL_SP_NoMap.png", "PHL_SP_NoMap2.png"],
+    "remagen": ["Remagen_SP_NoMap.png", "Remagen_SP_NoMap2.png"],
+    "smdm": ["SMDMV2_SP_NoMap.png", "SMDMV2_SP_NoMap2.png"],
+    "sme": ["SME_SP_NoMap.png", "SME_SP_NoMap2.png"],
+    "smolensk": ["Smolensk_SP_NoMap.png", "Smolensk_SP_NoMap2.png"],
+    "stalingrad": ["Stalingrad_SP_NoMap.png", "Stalingrad_SP_NoMap2.png"],
+    "tobruk": ["Tobruk_SP_NoMap.png", "Tobruk_SP_NoMap2.png"],
+    "utah": ["Utah_SP_NoMap.png", "Utah_SP_NoMap2.png"],
+}
+
 
 def download(url: str, dest: str, retries: int = 3) -> None:
     headers = {
@@ -104,13 +128,13 @@ def main() -> int:
     parser.add_argument(
         "--with-points",
         action="store_true",
-        help="shortcut for --variant accessible",
+        help="download strongpoint overlay layers (for HQ base + points)",
     )
     parser.add_argument("--force", action="store_true", help="overwrite existing files")
     parser.add_argument("--dry-run", action="store_true", help="print actions only")
     args = parser.parse_args()
 
-    variant = "accessible" if args.with_points else args.variant
+    variant = args.variant
     source = SOURCES[variant]
     base_url = f"{BASE_ROOT}/{source['base']}"
     map_files = source["files"]
@@ -120,8 +144,25 @@ def main() -> int:
     skipped = 0
     failed = 0
 
+    tasks = []
     for local_name, upstream_name in map_files.items():
-        src = f"{base_url}/{upstream_name}"
+        tasks.append((f"{base_url}/{upstream_name}", local_name))
+
+    if args.with_points:
+        points_base = f"{BASE_ROOT}/points"
+        for slug, layers in POINT_OVERLAY_FILES.items():
+            for idx, upstream_name in enumerate(layers, start=1):
+                suffix = "" if idx == 1 else str(idx)
+                local_name = f"{slug}_points{suffix}.png"
+                tasks.append((f"{points_base}/{upstream_name}", local_name))
+
+    # Keep stable ordering and avoid duplicates by local filename.
+    deduped = {}
+    for src, local_name in tasks:
+        deduped[local_name] = src
+    ordered_tasks = [(src, local_name) for local_name, src in sorted(deduped.items(), key=lambda x: x[0])]
+
+    for src, local_name in ordered_tasks:
         dst = os.path.join(MAPS_DIR, local_name)
         if os.path.exists(dst) and not args.force:
             skipped += 1
@@ -139,7 +180,10 @@ def main() -> int:
             print(f"[fail] maps/{local_name}: {exc}")
 
     if args.dry_run:
-        print(f"\nPlanned {len(map_files)} file(s) from variant='{variant}'.")
+        print(
+            f"\nPlanned {len(ordered_tasks)} file(s) from variant='{variant}'"
+            f"{' + points overlays' if args.with_points else ''}."
+        )
         return 0
 
     print(f"\nDone. downloaded={ok} skipped={skipped} failed={failed}")

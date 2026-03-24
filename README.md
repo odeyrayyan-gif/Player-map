@@ -42,7 +42,8 @@ To force the original high-quality pack (recommended), overwrite existing files:
 python3 "download_maps.py" --variant no-grid --force
 ```
 
-If you want map images with strongpoint/capture-point overlays:
+If you want map images with strongpoint/capture-point overlays while keeping
+the high-quality base maps:
 
 ```bash
 python3 "download_maps.py" --with-points
