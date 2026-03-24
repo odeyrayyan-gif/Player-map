@@ -22,6 +22,7 @@ PORT = int(os.environ.get("PLAYER_MAP_APP_PORT", "3100"))
 MAP_VISUAL_EXTENSIONS = {".webp", ".png", ".jpg", ".jpeg"}
 
 DEFAULT_CONFIG = {
+    "api_base_url": "",
     "live_stats_url": "",
     "team_view_url": "",
     "gamestate_url": "",
@@ -155,6 +156,70 @@ def build_variant_candidates(endpoint_seed, targets):
         expanded.append(candidate)
         expanded.append(add_trailing_slash_variant(candidate))
     return dedupe_keep_order(expanded)
+
+
+KNOWN_ENDPOINT_NAMES = {
+    "get_live_game_stats",
+    "get_team_view",
+    "get_teamview",
+    "team_view",
+    "get_gamestate",
+    "get_game_state",
+    "gamestate",
+}
+
+
+def build_base_endpoint_candidates(api_base_url, target_name):
+    base = str(api_base_url or "").strip()
+    if not base:
+        return []
+    if "://" not in base:
+        base = f"http://{base}"
+    try:
+        parsed = urllib.parse.urlparse(base)
+    except Exception:
+        return []
+    if not parsed.netloc:
+        return []
+
+    target = str(target_name or "").strip().lstrip("/").lower()
+    if not target:
+        return []
+
+    clean_path = parsed.path or ""
+    if clean_path in {"", "/"}:
+        clean_path = ""
+
+    out = []
+    append_path = f"{clean_path.rstrip('/')}/{target}" if clean_path else f"/{target}"
+    out.append(urllib.parse.urlunparse(parsed._replace(path=append_path)))
+
+    if not clean_path:
+        out.append(urllib.parse.urlunparse(parsed._replace(path=f"/api/{target}")))
+    elif not clean_path.rstrip("/").lower().endswith("/api"):
+        out.append(urllib.parse.urlunparse(parsed._replace(path=f"{clean_path.rstrip('/')}/api/{target}")))
+
+    parts = [p for p in clean_path.split("/") if p]
+    if parts and parts[-1].lower() in KNOWN_ENDPOINT_NAMES:
+        parts[-1] = target
+        out.append(urllib.parse.urlunparse(parsed._replace(path="/" + "/".join(parts))))
+
+    expanded = []
+    for candidate in dedupe_keep_order(out):
+        expanded.append(candidate)
+        expanded.append(add_trailing_slash_variant(candidate))
+    return dedupe_keep_order(expanded)
+
+
+def collect_base_seeds(api_base_url, explicit_urls):
+    seeds = dedupe_keep_order(list(explicit_urls or []) + [api_base_url])
+    base_seeds = []
+    for seed in seeds:
+        if not seed:
+            continue
+        variants = build_base_endpoint_candidates(seed, "get_live_game_stats")
+        base_seeds.extend(variants if variants else [seed])
+    return dedupe_keep_order(base_seeds)
 
 
 def fetch_json_url(url, cookie_header):
@@ -391,6 +456,15 @@ def normalize_player_colors(raw):
     }
 
 
+def normalize_api_base_url(raw):
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if "://" not in text:
+        text = f"http://{text}"
+    return text.rstrip("/")
+
+
 def extract_map_bounds(payload):
     result = payload.get("result", payload) if isinstance(payload, dict) else {}
     if not isinstance(result, dict):
@@ -559,13 +633,14 @@ def flatten_players(allied_data, axis_data):
 
 def build_frame(cfg):
     cookie = (cfg.get("cookie") or "").strip()
+    api_base_url = normalize_api_base_url(cfg.get("api_base_url"))
     team_view_url = (cfg.get("team_view_url") or "").strip()
     gamestate_url = (cfg.get("gamestate_url") or "").strip()
     live_stats_url = (cfg.get("live_stats_url") or "").strip()
 
-    seeds = dedupe_keep_order([team_view_url, gamestate_url, live_stats_url])
-    if not any(seeds):
+    if not any([team_view_url, gamestate_url, live_stats_url, api_base_url]):
         raise RuntimeError("NO_ENDPOINT_CONFIGURED")
+    seeds = collect_base_seeds(api_base_url, [team_view_url, gamestate_url, live_stats_url])
 
     team_targets = ["get_team_view", "get_teamview", "team_view"]
     if team_view_url:
@@ -573,6 +648,7 @@ def build_frame(cfg):
         tv_candidates = dedupe_keep_order([team_view_url, add_trailing_slash_variant(team_view_url)])
     else:
         tv_candidates = []
+        tv_candidates.extend(build_base_endpoint_candidates(api_base_url, "get_team_view"))
         for seed in seeds:
             tv_candidates.extend(build_variant_candidates(seed, team_targets))
         tv_candidates = dedupe_keep_order(tv_candidates)
@@ -587,6 +663,7 @@ def build_frame(cfg):
         gs_candidates = dedupe_keep_order([gamestate_url, add_trailing_slash_variant(gamestate_url)])
     else:
         gs_candidates = []
+        gs_candidates.extend(build_base_endpoint_candidates(api_base_url, "get_gamestate"))
         for seed in seeds:
             gs_candidates.extend(build_variant_candidates(seed, game_targets))
         gs_candidates = dedupe_keep_order(gs_candidates)
@@ -838,6 +915,7 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/config":
             allowed = {
+                "api_base_url",
                 "live_stats_url",
                 "team_view_url",
                 "gamestate_url",
@@ -860,6 +938,8 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
                 update["player_view"] = normalize_player_view(update.get("player_view"))
             if "player_colors" in update:
                 update["player_colors"] = normalize_player_colors(update.get("player_colors"))
+            if "api_base_url" in update:
+                update["api_base_url"] = normalize_api_base_url(update.get("api_base_url"))
             cfg = write_config(update)
             self.send_json({"ok": True, "config": cfg})
             return

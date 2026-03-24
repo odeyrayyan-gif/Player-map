@@ -224,10 +224,13 @@
   <div class="top">
     <div class="card">
       <div class="row">
-        <input id="liveStatsUrl" placeholder="Live stats URL (optional if team view URL provided)" />
+        <input id="apiBaseUrl" placeholder="API base URL (optional, e.g. http://HOST:PORT/api)" />
       </div>
       <div class="row">
-        <input id="teamViewUrl" placeholder="Team view URL (required)" />
+        <input id="liveStatsUrl" placeholder="Live stats URL (optional, auto-derived from API base if blank)" />
+      </div>
+      <div class="row">
+        <input id="teamViewUrl" placeholder="Team view URL (optional, auto-derived from API base if blank)" />
       </div>
       <div class="row">
         <input id="gamestateUrl" placeholder="Gamestate URL (optional)" />
@@ -509,6 +512,7 @@
 
     function getCfgFromInputs() {
       return {
+        api_base_url: $("apiBaseUrl").value.trim(),
         live_stats_url: $("liveStatsUrl").value.trim(),
         team_view_url: $("teamViewUrl").value.trim(),
         gamestate_url: $("gamestateUrl").value.trim(),
@@ -525,6 +529,7 @@
     async function loadConfig() {
       const j = await api("/api/config");
       const c = j.config || {};
+      $("apiBaseUrl").value = c.api_base_url || "";
       $("liveStatsUrl").value = c.live_stats_url || "";
       $("teamViewUrl").value = c.team_view_url || "";
       $("gamestateUrl").value = c.gamestate_url || "";
