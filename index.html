@@ -481,6 +481,33 @@
       });
     }
 
+    function projectWorld(rawPos, frame) {
+      if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
+      if (rawPos.x === 0 && rawPos.y === 0) return null;
+      const pv = normalizePlayerView(frame?.player_view || null);
+      let x = rawPos.x;
+      let y = rawPos.y;
+      if (pv.mirror_x) x = -x;
+      if (pv.mirror_y) y = -y;
+      return { x, y };
+    }
+
+    function isLikelyValidCalibrationPoint(pos) {
+      if (!pos || typeof pos.x !== "number" || typeof pos.y !== "number") return false;
+      if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return false;
+      if (pos.x === 0 && pos.y === 0) return false;
+      const maxAbs = 300000;
+      if (Math.abs(pos.x) > maxAbs || Math.abs(pos.y) > maxAbs) return false;
+      return true;
+    }
+
+    function collectCalibrationPoints(frame) {
+      return (frame?.players || [])
+        .map((p) => p?.world_position)
+        .filter(isLikelyValidCalibrationPoint)
+        .map((p) => ({ x: p.x, y: p.y }));
+    }
+
     function rgbToHsl(r, g, b) {
       const rn = r / 255;
       const gn = g / 255;
