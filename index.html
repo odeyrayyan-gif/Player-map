@@ -1359,6 +1359,14 @@
         const j = await api("/api/map_visuals");
         const files = Array.isArray(j.files) ? j.files : [];
         const map = {};
+        const extRank = { webp: 0, png: 1, jpg: 2, jpeg: 3 };
+        const getExt = (url) => {
+          const s = String(url || "").toLowerCase();
+          const q = s.indexOf("?");
+          const clean = q >= 0 ? s.slice(0, q) : s;
+          const dot = clean.lastIndexOf(".");
+          return dot >= 0 ? clean.slice(dot + 1) : "";
+        };
         for (const item of files) {
           if (!item || typeof item !== "object") continue;
           const url = String(item.url || "").trim();
@@ -1366,6 +1374,16 @@
           if (!url || !stem) continue;
           if (!map[stem]) map[stem] = [];
           map[stem].push(url);
+        }
+        for (const stem of Object.keys(map)) {
+          map[stem].sort((a, b) => {
+            const ra = extRank[getExt(a)];
+            const rb = extRank[getExt(b)];
+            const pa = Number.isFinite(ra) ? ra : 99;
+            const pb = Number.isFinite(rb) ? rb : 99;
+            if (pa !== pb) return pa - pb;
+            return String(a).localeCompare(String(b));
+          });
         }
         state.mapVisualIndex = map;
       } catch (_) {
