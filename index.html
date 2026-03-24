@@ -498,11 +498,14 @@
       return r.includes("tank commander") || r.includes("tankcommander") || r.includes("crewman");
     }
 
-    function getSquadInitial(squad) {
+    function getSquadInitial(squad, fallbackName = "") {
       const text = String(squad || "").trim();
       if (!text) return "";
       const m = text.match(/[A-Za-z0-9]/);
-      return m ? m[0].toUpperCase() : "";
+      if (m) return m[0].toUpperCase();
+      const fallback = String(fallbackName || "").trim();
+      const f = fallback.match(/[A-Za-z0-9]/);
+      return f ? f[0].toUpperCase() : "";
     }
 
     function setPlayerColorsInputs(raw) {
@@ -1110,10 +1113,10 @@
           ctx.stroke();
         }
         if (p.is_squad_leader) {
-          const initial = getSquadInitial(p.squad);
+          const initial = getSquadInitial(p.squad, p.name);
           if (initial) {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-            ctx.font = "bold 10px Arial";
+            ctx.fillStyle = "rgba(0, 0, 0, 0.95)";
+            ctx.font = "bold 11px Arial";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(initial, x, y);
