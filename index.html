@@ -245,6 +245,50 @@
       stmariedumont: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
       stmariedumont_day_webp: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
     };
+    // User-provided orientation presets:
+    // - "horizontal" => top/bottom 2 rows unplayable (rows C..H playable)
+    // - "vertical" => left/right 2 cols unplayable (cols 3..8 playable)
+    const HLL_MAP_HORIZONTAL_SLUGS = new Set([
+      "carentan",
+      "elalamein",
+      "el_alamein",
+      "hill400",
+      "hill_400",
+      "hurtgen",
+      "hurtgenforest",
+      "hurtgen_forest",
+      "mortain",
+      "omaha",
+      "omahabeach",
+      "omaha_beach",
+      "sme",
+      "stmereeglise",
+      "st_mere_eglise",
+      "saintemereeglise",
+      "sainte_mere_eglise",
+      "stalingrad",
+      "tobruk",
+      "utah",
+      "utahbeach",
+      "utah_beach",
+    ]);
+    const HLL_MAP_VERTICAL_SLUGS = new Set([
+      "driel",
+      "elsenbornridge",
+      "elsenborn_ridge",
+      "foy",
+      "kharkov",
+      "kursk",
+      "phl",
+      "purpleheartlane",
+      "purple_heart_lane",
+      "remagen",
+      "smdm",
+      "stmariedumont",
+      "st_marie_du_mont",
+      "saintemariedumont",
+      "sainte_marie_du_mont",
+    ]);
     const MAP_SLUG_ALIASES = {
       utahbeach: "utah",
       utah_beach: "utah",
@@ -583,6 +627,16 @@
       for (const slug of slugs) {
         const preset = HLL_MAP_PLAYABLE_GRID_PRESETS[slug];
         if (preset) return preset;
+      }
+      for (const slug of slugs) {
+        if (HLL_MAP_HORIZONTAL_SLUGS.has(slug)) {
+          // Rows C..H playable, all columns playable.
+          return { col_start: 1, col_end: 10, row_start: 3, row_end: 8 };
+        }
+        if (HLL_MAP_VERTICAL_SLUGS.has(slug)) {
+          // Columns 3..8 playable, all rows playable.
+          return { col_start: 3, col_end: 8, row_start: 1, row_end: 10 };
+        }
       }
       return null;
     }
