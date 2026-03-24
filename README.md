@@ -36,11 +36,17 @@ This downloads base HLL map images from a public source into `maps/` with
 filenames already normalized for this app (for example: `carentan.webp`,
 `remagen.webp`, `sme.webp`, `smdm.webp`, `utah.webp`, `omaha.webp`).
 
+If you want map images with strongpoint/capture-point overlays:
+
+```bash
+python3 "download_maps.py" --with-points
+```
+
 Optional flags:
 
 ```bash
-python3 "download_maps.py" --list-only
-python3 "download_maps.py" --overwrite
+python3 "download_maps.py" --dry-run
+python3 "download_maps.py" --force
 ```
 
 ## Configure
