@@ -32,6 +32,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      min-height: 78px;
       position: sticky;
       top: 0;
       z-index: 40;
@@ -43,6 +44,16 @@
       max-height: 88px;
       object-fit: contain;
       display: block;
+    }
+    .brand-fallback {
+      display: none;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      color: #1f6d35;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+      user-select: none;
+      text-transform: uppercase;
     }
     .top {
       padding: 10px 12px;
@@ -220,6 +231,7 @@
 <body>
   <div class="brand-banner" title="Pathfinders">
     <img id="brandLogo" src="./maps/pathfinders_logo.png" alt="Pathfinders" />
+    <span id="brandLogoFallback" class="brand-fallback">Pathfinders</span>
   </div>
   <div class="top">
     <div class="card">
@@ -1956,11 +1968,27 @@
       });
     }
 
-    function initBrandLogo() {
+    async function initBrandLogo() {
       const img = $("brandLogo");
+      const fallback = $("brandLogoFallback");
       if (!img) return;
+      const setVisible = (ok) => {
+        img.style.display = ok ? "block" : "none";
+        if (fallback) fallback.style.display = ok ? "none" : "inline-block";
+      };
+      setVisible(false);
       const stamp = String(Date.now());
       const candidates = [
+        "/maps/pathfinders_logo.png",
+        "/maps/pathfinders_logo.webp",
+        "/maps/pathfinders_logo.jpg",
+        "/maps/pathfinders_logo.jpeg",
+        "/maps/pathfinders-logo.png",
+        "/maps/pathfinders-logo.webp",
+        "/maps/Pathfinders_logo.png",
+        "/maps/PATHFINDERS.png",
+        "/pathfinders_logo.png",
+        "/pathfinders_logo.webp",
         "./maps/pathfinders_logo.png",
         "./maps/pathfinders_logo.webp",
         "./maps/pathfinders_logo.jpg",
@@ -1968,23 +1996,40 @@
         "./maps/Pathfinders_logo.png",
         "./maps/pathfinders-logo.png",
         "./maps/PATHFINDERS.png",
-      ].map((p) => `${p}?v=${stamp}`);
+      ];
+      try {
+        const j = await api("/api/map_visuals");
+        const files = Array.isArray(j?.files) ? j.files : [];
+        for (const file of files) {
+          const url = String(file?.url || "").trim();
+          const stem = String(file?.stem || "").trim().toLowerCase();
+          if (!url) continue;
+          if (stem.includes("pathfinder")) candidates.push(url);
+        }
+      } catch (_) {
+        // Best effort only; keep static candidate list.
+      }
+      const uniq = dedupe(candidates.map((p) => `${p}?v=${stamp}`));
       let idx = 0;
+      img.onload = () => {
+        setVisible(true);
+      };
       img.onerror = () => {
         idx += 1;
-        if (idx >= candidates.length) {
+        if (idx >= uniq.length) {
           img.onerror = null;
-          img.style.display = "none";
+          img.onload = null;
+          setVisible(false);
           return;
         }
-        img.src = candidates[idx];
+        img.src = uniq[idx];
       };
-      img.src = candidates[idx];
+      img.src = uniq[idx];
     }
 
 
     async function init() {
-      initBrandLogo();
+      await initBrandLogo();
       bindCanvasHover();
       bindCanvasSelection();
       bindCanvasZoom();
