@@ -4,6 +4,7 @@ Runs independently from the overlay server.
 """
 
 import json
+import math
 import os
 import re
 import threading
@@ -16,15 +17,40 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 MATCH_DIR = os.path.join(APP_DIR, "matches")
+MAPS_DIR = os.path.join(APP_DIR, "maps")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 PORT = int(os.environ.get("PLAYER_MAP_APP_PORT", "3100"))
+MAP_VISUAL_EXTENSIONS = {".webp", ".png", ".jpg", ".jpeg"}
 
 DEFAULT_CONFIG = {
+    "api_base_url": "",
     "live_stats_url": "",
     "team_view_url": "",
     "gamestate_url": "",
     "cookie": "",
     "poll_interval_ms": 2000,
+    "map_bounds": {},
+    "projection": {
+        "flip_x": False,
+        "flip_y": False,
+        "swap_xy": False,
+        "scale_x": 1.0,
+        "scale_y": 1.0,
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+    },
+    "map_view": {
+        "flip_x": False,
+        "flip_y": False,
+    },
+    "player_view": {
+        "mirror_x": False,
+        "mirror_y": False,
+    },
+    "player_colors": {
+        "allies": "#58a6ff",
+        "axis": "#ff5f5f",
+    },
 }
 
 STATE_LOCK = threading.Lock()
@@ -35,6 +61,7 @@ STATE = {
 
 def ensure_dirs():
     os.makedirs(MATCH_DIR, exist_ok=True)
+    os.makedirs(MAPS_DIR, exist_ok=True)
 
 
 def read_config():
@@ -92,26 +119,108 @@ def endpoint_looks_like(endpoint, targets):
 def build_api_variant_url(endpoint, target_name):
     try:
         parsed = urllib.parse.urlparse(endpoint)
-        parts = parsed.path.split("/")
+        raw_parts = [p for p in parsed.path.split("/") if p]
+        parts = list(raw_parts)
         target = str(target_name or "").lstrip("/").lower()
         idx = next((i for i, p in enumerate(parts) if p.lower() == "get_live_game_stats"), -1)
         if idx >= 0:
             parts[idx] = target
-        elif len(parts) > 1:
+        elif len(parts) >= 1:
             parts[-1] = target
         else:
             return ""
-        new_path = "/".join(parts)
+        new_path = "/" + "/".join(parts)
         return urllib.parse.urlunparse(parsed._replace(path=new_path))
+    except Exception:
+        return ""
+
+
+def add_trailing_slash_variant(url):
+    try:
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path or "/"
+        alt_path = path[:-1] if path.endswith("/") else f"{path}/"
+        if alt_path == path:
+            return ""
+        return urllib.parse.urlunparse(parsed._replace(path=alt_path))
     except Exception:
         return ""
 
 
 def build_variant_candidates(endpoint_seed, targets):
     variants = [build_api_variant_url(endpoint_seed, t) for t in targets]
-    if endpoint_looks_like(endpoint_seed, targets):
-        return dedupe_keep_order([endpoint_seed] + variants)
-    return dedupe_keep_order(variants)
+    base = [endpoint_seed] + variants if endpoint_seed else variants
+    expanded = []
+    for candidate in base:
+        if not candidate:
+            continue
+        expanded.append(candidate)
+        expanded.append(add_trailing_slash_variant(candidate))
+    return dedupe_keep_order(expanded)
+
+
+KNOWN_ENDPOINT_NAMES = {
+    "get_live_game_stats",
+    "get_team_view",
+    "get_teamview",
+    "team_view",
+    "get_gamestate",
+    "get_game_state",
+    "gamestate",
+}
+
+
+def build_base_endpoint_candidates(api_base_url, target_name):
+    base = str(api_base_url or "").strip()
+    if not base:
+        return []
+    if "://" not in base:
+        base = f"http://{base}"
+    try:
+        parsed = urllib.parse.urlparse(base)
+    except Exception:
+        return []
+    if not parsed.netloc:
+        return []
+
+    target = str(target_name or "").strip().lstrip("/").lower()
+    if not target:
+        return []
+
+    clean_path = parsed.path or ""
+    if clean_path in {"", "/"}:
+        clean_path = ""
+
+    out = []
+    append_path = f"{clean_path.rstrip('/')}/{target}" if clean_path else f"/{target}"
+    out.append(urllib.parse.urlunparse(parsed._replace(path=append_path)))
+
+    if not clean_path:
+        out.append(urllib.parse.urlunparse(parsed._replace(path=f"/api/{target}")))
+    elif not clean_path.rstrip("/").lower().endswith("/api"):
+        out.append(urllib.parse.urlunparse(parsed._replace(path=f"{clean_path.rstrip('/')}/api/{target}")))
+
+    parts = [p for p in clean_path.split("/") if p]
+    if parts and parts[-1].lower() in KNOWN_ENDPOINT_NAMES:
+        parts[-1] = target
+        out.append(urllib.parse.urlunparse(parsed._replace(path="/" + "/".join(parts))))
+
+    expanded = []
+    for candidate in dedupe_keep_order(out):
+        expanded.append(candidate)
+        expanded.append(add_trailing_slash_variant(candidate))
+    return dedupe_keep_order(expanded)
+
+
+def collect_base_seeds(api_base_url, explicit_urls):
+    seeds = dedupe_keep_order(list(explicit_urls or []) + [api_base_url])
+    base_seeds = []
+    for seed in seeds:
+        if not seed:
+            continue
+        variants = build_base_endpoint_candidates(seed, "get_live_game_stats")
+        base_seeds.extend(variants if variants else [seed])
+    return dedupe_keep_order(base_seeds)
 
 
 def fetch_json_url(url, cookie_header):
@@ -127,30 +236,265 @@ def fetch_json_url(url, cookie_header):
 
 
 def fetch_first_ok_json(url_candidates, cookie_header):
-    last_error = "no candidate url"
+    failures = []
     for raw in url_candidates:
         if not raw:
             continue
         try:
             return fetch_json_url(raw, cookie_header)
         except urllib.error.HTTPError as e:
-            last_error = f"HTTP {e.code}"
+            failures.append(f"HTTP {e.code} ({raw})")
+        except urllib.error.URLError as e:
+            failures.append(f"{e.reason} ({raw})")
         except Exception as e:
-            last_error = str(e)
-    raise RuntimeError(last_error)
+            failures.append(f"{str(e)} ({raw})")
+    if not failures:
+        raise RuntimeError("no candidate url")
+    raise RuntimeError("; ".join(failures[:8]))
 
 
-def extract_map_name(payload):
+def normalize_map_key(value):
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def extract_map_meta(payload):
     result = payload.get("result", payload) if isinstance(payload, dict) else {}
     if not isinstance(result, dict):
-        return "UNKNOWN MAP"
-    if isinstance(result.get("map"), dict) and result["map"].get("pretty_name"):
-        return str(result["map"]["pretty_name"]).upper()
-    if isinstance(result.get("current_map"), dict) and result["current_map"].get("pretty_name"):
-        return str(result["current_map"]["pretty_name"]).upper()
-    if result.get("pretty_name"):
-        return str(result["pretty_name"]).upper()
-    return "UNKNOWN MAP"
+        return {"map_name": "UNKNOWN MAP", "map_shortname": "", "map_image_name": ""}
+
+    sources = []
+    if isinstance(result.get("map"), dict):
+        sources.append(result["map"])
+    if isinstance(result.get("current_map"), dict):
+        sources.append(result["current_map"])
+    sources.append(result)
+
+    pretty_name = ""
+    shortname = ""
+    image_name = ""
+
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        if not pretty_name and src.get("pretty_name"):
+            pretty_name = str(src.get("pretty_name")).strip()
+        if not shortname and src.get("shortname"):
+            shortname = normalize_map_key(src.get("shortname"))
+        if not image_name and src.get("image_name"):
+            image_name = normalize_map_key(src.get("image_name"))
+
+    if not shortname and image_name:
+        shortname = image_name
+
+    map_name = pretty_name.upper() if pretty_name else "UNKNOWN MAP"
+    return {
+        "map_name": map_name,
+        "map_shortname": shortname,
+        "map_image_name": image_name,
+    }
+
+
+def extract_score_time_meta(payload):
+    result = payload.get("result", payload) if isinstance(payload, dict) else {}
+    if not isinstance(result, dict):
+        return {"allies_score": None, "axis_score": None, "time_remaining_sec": None}
+
+    sources = []
+    if isinstance(result.get("map"), dict):
+        sources.append(result["map"])
+    if isinstance(result.get("current_map"), dict):
+        sources.append(result["current_map"])
+    if isinstance(result.get("score"), dict):
+        sources.append(result["score"])
+    if isinstance(result.get("scores"), dict):
+        sources.append(result["scores"])
+    sources.append(result)
+
+    def get_num(keys):
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            for key in keys:
+                if key in src:
+                    value = to_float_or_none(src.get(key))
+                    if value is not None:
+                        return int(value)
+        return None
+
+    allies_score = get_num(("allies_score", "allied_score", "allies", "us_score", "friendly_score"))
+    axis_score = get_num(("axis_score", "enemy_score", "axis", "ger_score"))
+    time_remaining_sec = get_num(
+        (
+            "time_remaining",
+            "time_remaining_sec",
+            "remaining_time",
+            "remaining_seconds",
+            "seconds_remaining",
+            "time_left",
+            "match_time_remaining",
+        )
+    )
+    return {
+        "allies_score": allies_score,
+        "axis_score": axis_score,
+        "time_remaining_sec": time_remaining_sec,
+    }
+
+
+def to_float_or_none(value):
+    try:
+        out = float(value)
+        if out != out:  # NaN
+            return None
+        return out
+    except Exception:
+        return None
+
+
+def normalize_bounds(raw):
+    if not isinstance(raw, dict):
+        return None
+
+    aliases = {
+        "x_min": ["x_min", "xmin", "min_x", "left"],
+        "x_max": ["x_max", "xmax", "max_x", "right"],
+        "y_min": ["y_min", "ymin", "min_y", "bottom"],
+        "y_max": ["y_max", "ymax", "max_y", "top"],
+    }
+    out = {}
+    for canon, keys in aliases.items():
+        value = None
+        for key in keys:
+            if key in raw:
+                value = to_float_or_none(raw.get(key))
+                if value is not None:
+                    break
+        out[canon] = value
+
+    x_min = out["x_min"]
+    x_max = out["x_max"]
+    y_min = out["y_min"]
+    y_max = out["y_max"]
+
+    if None in (x_min, x_max, y_min, y_max):
+        return None
+    if x_max <= x_min or y_max <= y_min:
+        return None
+
+    return {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max}
+
+
+def normalize_projection(raw):
+    base = {
+        "flip_x": False,
+        "flip_y": False,
+        "swap_xy": False,
+        "scale_x": 1.0,
+        "scale_y": 1.0,
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+    }
+    if not isinstance(raw, dict):
+        return dict(base)
+
+    out = dict(base)
+    out["flip_x"] = bool(raw.get("flip_x", base["flip_x"]))
+    out["flip_y"] = bool(raw.get("flip_y", base["flip_y"]))
+    out["swap_xy"] = bool(raw.get("swap_xy", base["swap_xy"]))
+    out["scale_x"] = to_float_or_none(raw.get("scale_x"))
+    out["scale_y"] = to_float_or_none(raw.get("scale_y"))
+    out["offset_x"] = to_float_or_none(raw.get("offset_x"))
+    out["offset_y"] = to_float_or_none(raw.get("offset_y"))
+
+    if out["scale_x"] is None or abs(out["scale_x"]) < 1e-9:
+        out["scale_x"] = base["scale_x"]
+    if out["scale_y"] is None or abs(out["scale_y"]) < 1e-9:
+        out["scale_y"] = base["scale_y"]
+    if out["offset_x"] is None:
+        out["offset_x"] = base["offset_x"]
+    if out["offset_y"] is None:
+        out["offset_y"] = base["offset_y"]
+    return out
+
+
+def normalize_map_view(raw):
+    base = {"flip_x": False, "flip_y": False}
+    if not isinstance(raw, dict):
+        return dict(base)
+    return {
+        "flip_x": bool(raw.get("flip_x", base["flip_x"])),
+        "flip_y": bool(raw.get("flip_y", base["flip_y"])),
+    }
+
+
+def normalize_player_view(raw):
+    base = {"mirror_x": False, "mirror_y": False}
+    if not isinstance(raw, dict):
+        return dict(base)
+    return {
+        "mirror_x": bool(raw.get("mirror_x", base["mirror_x"])),
+        "mirror_y": bool(raw.get("mirror_y", base["mirror_y"])),
+    }
+
+
+def normalize_player_colors(raw):
+    base = {"allies": "#58a6ff", "axis": "#ff5f5f"}
+    if not isinstance(raw, dict):
+        return dict(base)
+
+    def clean_hex(value, fallback):
+        text = str(value or "").strip().lower()
+        if re.fullmatch(r"#[0-9a-f]{6}", text):
+            return text
+        return fallback
+
+    return {
+        "allies": clean_hex(raw.get("allies"), base["allies"]),
+        "axis": clean_hex(raw.get("axis"), base["axis"]),
+    }
+
+
+def normalize_api_base_url(raw):
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if "://" not in text:
+        text = f"http://{text}"
+    return text.rstrip("/")
+
+
+def extract_map_bounds(payload):
+    result = payload.get("result", payload) if isinstance(payload, dict) else {}
+    if not isinstance(result, dict):
+        return None
+
+    candidates = [
+        result,
+        result.get("map"),
+        result.get("current_map"),
+    ]
+    nested_keys = (
+        "bounds",
+        "map_bounds",
+        "world_bounds",
+        "playable_bounds",
+        "extent",
+        "extents",
+    )
+
+    for source in list(candidates):
+        if isinstance(source, dict):
+            for key in nested_keys:
+                candidates.append(source.get(key))
+
+    for candidate in candidates:
+        bounds = normalize_bounds(candidate)
+        if bounds:
+            return bounds
+    return None
 
 
 def extract_teams(payload):
@@ -171,6 +515,209 @@ def extract_teams(payload):
 
 def flatten_players(allied_data, axis_data):
     out = []
+    seen = {}
+
+    def player_identity_set(p):
+        ids = set()
+        for key in ("player_id", "id", "steam_id", "steamid", "name", "player"):
+            value = p.get(key)
+            if value is None:
+                continue
+            ids.add(str(value).strip().lower())
+        return {v for v in ids if v}
+
+    def match_player_ref(player_ids, ref):
+        if ref is None:
+            return False
+        if isinstance(ref, dict):
+            for key in ("player_id", "id", "steam_id", "steamid", "name", "player"):
+                if match_player_ref(player_ids, ref.get(key)):
+                    return True
+            return False
+        value = str(ref).strip().lower()
+        return bool(value) and value in player_ids
+
+    def parse_num(value):
+        try:
+            n = float(value)
+            return n if math.isfinite(n) else None
+        except Exception:
+            return None
+
+    def parse_xy_mapping(obj):
+        if not isinstance(obj, dict):
+            return None
+        key_pairs = (
+            ("x", "y"),
+            ("X", "Y"),
+            ("world_x", "world_y"),
+            ("worldX", "worldY"),
+            ("x_pos", "y_pos"),
+            ("xPos", "yPos"),
+        )
+        for x_key, y_key in key_pairs:
+            if x_key in obj and y_key in obj:
+                x = parse_num(obj.get(x_key))
+                y = parse_num(obj.get(y_key))
+                if x is not None and y is not None:
+                    return {"x": x, "y": y}
+        return None
+
+    def normalize_world_position(raw):
+        direct = parse_xy_mapping(raw)
+        if direct:
+            return direct
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            x = parse_num(raw[0])
+            y = parse_num(raw[1])
+            if x is not None and y is not None:
+                return {"x": x, "y": y}
+        if isinstance(raw, dict):
+            for nested_key in (
+                "world_position",
+                "worldPosition",
+                "position",
+                "pos",
+                "location",
+                "coordinates",
+                "coord",
+                "coords",
+            ):
+                nested = normalize_world_position(raw.get(nested_key))
+                if nested:
+                    return nested
+        return None
+
+    def extract_world_position(p):
+        if not isinstance(p, dict):
+            return None
+        for key in (
+            "world_position",
+            "worldPosition",
+            "position",
+            "pos",
+            "location",
+            "coordinates",
+            "coord",
+            "coords",
+        ):
+            pos = normalize_world_position(p.get(key))
+            if pos:
+                return pos
+        return None
+
+    def as_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    def build_seen_key(team_name, p, name, role, squad_name):
+        ids = sorted(player_identity_set(p))
+        if ids:
+            return f"{team_name}|{'|'.join(ids)}"
+        fallback = str(name or "").strip().lower()
+        if not fallback:
+            return ""
+        role_key = re.sub(r"[^a-z0-9]+", "", str(role or "").strip().lower()) or "role"
+        squad_key = re.sub(r"[^a-z0-9]+", "", str(squad_name or "").strip().lower()) or "squad"
+        return f"{team_name}|name:{fallback}|role:{role_key}|squad:{squad_key}"
+
+    def iter_player_dicts(raw_players):
+        if isinstance(raw_players, list):
+            for item in raw_players:
+                if isinstance(item, dict):
+                    yield item
+            return
+        if isinstance(raw_players, dict):
+            for item in raw_players.values():
+                if isinstance(item, dict):
+                    yield item
+
+    def infer_squad_leader(squad, p):
+        if bool(
+            p.get("is_squad_leader")
+            or p.get("is_leader")
+            or p.get("leader")
+            or p.get("squad_leader")
+        ):
+            return True
+
+        player_ids = player_identity_set(p)
+        if not player_ids:
+            return False
+
+        for key in ("leader", "squad_leader", "officer", "squadlead"):
+            if match_player_ref(player_ids, squad.get(key)):
+                return True
+
+        role = re.sub(r"[^a-z0-9]+", "", str(p.get("role") or "").strip().lower())
+        if "officer" in role or role in {"tankcommander", "spotter", "reconspotter"}:
+            return True
+        return False
+
+    def infer_tank_role(role):
+        text = re.sub(r"[^a-z0-9]+", "", str(role or "").strip().lower())
+        return text in {"tankcommander", "crewman"}
+
+    def extract_vehicle_label(p):
+        for key in (
+            "vehicle",
+            "vehicle_name",
+            "vehicle_type",
+            "current_vehicle",
+            "active_vehicle",
+        ):
+            value = p.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def append_player(team_name, squad_name, p, force_squad_leader=False, fallback_name="Unknown"):
+        if not isinstance(p, dict):
+            return
+        role = p.get("role") or ""
+        name = p.get("name") or p.get("player") or fallback_name
+        entry = {
+            "name": name,
+            "player_id": p.get("player_id"),
+            "role": role,
+            "kills": as_int(p.get("kills") or 0),
+            "deaths": as_int(p.get("deaths") or 0),
+            "squad": squad_name or "No Squad",
+            "team": team_name,
+            "world_position": extract_world_position(p),
+            "is_squad_leader": force_squad_leader,
+            "is_tank_role": infer_tank_role(role),
+            "vehicle": extract_vehicle_label(p),
+        }
+        key = build_seen_key(team_name, p, name, role, squad_name)
+        idx = seen.get(key) if key else None
+        if idx is None:
+            if key:
+                seen[key] = len(out)
+            out.append(entry)
+            return
+
+        # Merge duplicate player references from multiple payload locations.
+        existing = out[idx]
+        if entry["world_position"] and not existing.get("world_position"):
+            existing["world_position"] = entry["world_position"]
+        if entry["role"] and not existing.get("role"):
+            existing["role"] = entry["role"]
+        if entry["name"] and existing.get("name") in {"", "Unknown", "Commander"}:
+            existing["name"] = entry["name"]
+        if entry["vehicle"] and not existing.get("vehicle"):
+            existing["vehicle"] = entry["vehicle"]
+        if entry["squad"] and existing.get("squad") in {"", "No Squad"}:
+            existing["squad"] = entry["squad"]
+        existing["kills"] = max(as_int(existing.get("kills")), entry["kills"])
+        existing["deaths"] = max(as_int(existing.get("deaths")), entry["deaths"])
+        existing["is_squad_leader"] = bool(existing.get("is_squad_leader")) or bool(force_squad_leader)
+        existing["is_tank_role"] = bool(existing.get("is_tank_role")) or bool(entry.get("is_tank_role"))
 
     def push_team(team_data, team_name):
         squads = team_data.get("squads", team_data)
@@ -178,40 +725,53 @@ def flatten_players(allied_data, axis_data):
             for squad_name, squad in squads.items():
                 if not isinstance(squad, dict):
                     continue
-                players = squad.get("players", [])
-                if not isinstance(players, list):
+                squad_players = squad.get("players", [])
+                for p in iter_player_dicts(squad_players):
+                    append_player(
+                        team_name,
+                        str(squad_name or p.get("squad") or p.get("squad_name") or "No Squad"),
+                        p,
+                        force_squad_leader=infer_squad_leader(squad, p),
+                    )
+        elif isinstance(squads, list):
+            for squad in squads:
+                if not isinstance(squad, dict):
                     continue
-                for p in players:
-                    if not isinstance(p, dict):
-                        continue
-                    out.append(
-                        {
-                            "name": p.get("name") or p.get("player") or "Unknown",
-                            "player_id": p.get("player_id"),
-                            "role": p.get("role") or "",
-                            "kills": p.get("kills") or 0,
-                            "deaths": p.get("deaths") or 0,
-                            "squad": squad_name,
-                            "team": team_name,
-                            "world_position": p.get("world_position"),
-                        }
+                squad_name = (
+                    squad.get("name")
+                    or squad.get("squad_name")
+                    or squad.get("squad")
+                    or "No Squad"
+                )
+                squad_players = squad.get("players") or squad.get("members") or []
+                for p in iter_player_dicts(squad_players):
+                    append_player(
+                        team_name,
+                        str(squad_name),
+                        p,
+                        force_squad_leader=infer_squad_leader(squad, p),
                     )
 
-        commander = team_data.get("commander")
-        if isinstance(commander, dict) and isinstance(commander.get("player"), dict):
-            p = commander["player"]
-            out.append(
-                {
-                    "name": p.get("name") or p.get("player") or "Commander",
-                    "player_id": p.get("player_id"),
-                    "role": p.get("role") or "armycommander",
-                    "kills": p.get("kills") or 0,
-                    "deaths": p.get("deaths") or 0,
-                    "squad": "COMMAND",
-                    "team": team_name,
-                    "world_position": p.get("world_position"),
-                }
-            )
+        for roster_key in ("players", "members", "roster"):
+            roster = team_data.get(roster_key)
+            for p in iter_player_dicts(roster):
+                squad_name = p.get("squad") or p.get("squad_name") or "No Squad"
+                append_player(team_name, str(squad_name), p, force_squad_leader=False)
+
+        commander_obj = team_data.get("commander")
+        if isinstance(commander_obj, dict):
+            commander_player = commander_obj.get("player") if isinstance(commander_obj.get("player"), dict) else commander_obj
+            if isinstance(commander_player, dict):
+                if not commander_player.get("role"):
+                    commander_player = dict(commander_player)
+                    commander_player["role"] = "armycommander"
+                append_player(
+                    team_name,
+                    "COMMAND",
+                    commander_player,
+                    force_squad_leader=True,
+                    fallback_name="Commander",
+                )
 
     push_team(allied_data, "allies")
     push_team(axis_data, "axis")
@@ -220,39 +780,104 @@ def flatten_players(allied_data, axis_data):
 
 def build_frame(cfg):
     cookie = (cfg.get("cookie") or "").strip()
-    seeds = dedupe_keep_order(
-        [cfg.get("team_view_url"), cfg.get("gamestate_url"), cfg.get("live_stats_url")]
-    )
-    if not seeds:
+    api_base_url = normalize_api_base_url(cfg.get("api_base_url"))
+    team_view_url = (cfg.get("team_view_url") or "").strip()
+    gamestate_url = (cfg.get("gamestate_url") or "").strip()
+    live_stats_url = (cfg.get("live_stats_url") or "").strip()
+
+    if not any([team_view_url, gamestate_url, live_stats_url, api_base_url]):
         raise RuntimeError("NO_ENDPOINT_CONFIGURED")
+    seeds = collect_base_seeds(api_base_url, [team_view_url, gamestate_url, live_stats_url])
 
     team_targets = ["get_team_view", "get_teamview", "team_view"]
-    tv_candidates = []
-    for seed in seeds:
-        tv_candidates.extend(build_variant_candidates(seed, team_targets))
-    tv_candidates = dedupe_keep_order(tv_candidates)
+    if team_view_url:
+        # If the user explicitly provided team_view_url, honor it exactly.
+        tv_candidates = dedupe_keep_order([team_view_url, add_trailing_slash_variant(team_view_url)])
+    else:
+        tv_candidates = []
+        tv_candidates.extend(build_base_endpoint_candidates(api_base_url, "get_team_view"))
+        for seed in seeds:
+            tv_candidates.extend(build_variant_candidates(seed, team_targets))
+        tv_candidates = dedupe_keep_order(tv_candidates)
     tv_data = fetch_first_ok_json(tv_candidates, cookie)
 
     allied_data, axis_data = extract_teams(tv_data)
     players = flatten_players(allied_data, axis_data)
 
     game_targets = ["get_gamestate", "get_game_state", "gamestate"]
-    gs_candidates = []
-    for seed in seeds:
-        gs_candidates.extend(build_variant_candidates(seed, game_targets))
-    gs_candidates = dedupe_keep_order(gs_candidates)
+    if gamestate_url:
+        # If the user explicitly provided gamestate_url, honor it exactly.
+        gs_candidates = dedupe_keep_order([gamestate_url, add_trailing_slash_variant(gamestate_url)])
+    else:
+        gs_candidates = []
+        gs_candidates.extend(build_base_endpoint_candidates(api_base_url, "get_gamestate"))
+        for seed in seeds:
+            gs_candidates.extend(build_variant_candidates(seed, game_targets))
+        gs_candidates = dedupe_keep_order(gs_candidates)
 
-    map_name = "UNKNOWN MAP"
+    tv_meta = extract_map_meta(tv_data)
+    tv_score = extract_score_time_meta(tv_data)
+    map_name = tv_meta["map_name"]
+    map_shortname = tv_meta["map_shortname"]
+    map_image_name = tv_meta["map_image_name"]
+    allies_score = tv_score["allies_score"]
+    axis_score = tv_score["axis_score"]
+    time_remaining_sec = tv_score["time_remaining_sec"]
+    map_bounds = normalize_bounds(cfg.get("map_bounds")) or None
+    map_bounds_source = "config" if map_bounds else "auto"
+    projection = normalize_projection(cfg.get("projection"))
+    map_view = normalize_map_view(cfg.get("map_view"))
+    player_view = normalize_player_view(cfg.get("player_view"))
+    player_colors = normalize_player_colors(cfg.get("player_colors"))
+
+    if not map_bounds:
+        tv_bounds = extract_map_bounds(tv_data)
+        if tv_bounds:
+            map_bounds = tv_bounds
+            map_bounds_source = "team_view"
+
     try:
         gs_data = fetch_first_ok_json(gs_candidates, cookie)
-        map_name = extract_map_name(gs_data)
+        gs_meta = extract_map_meta(gs_data)
+        gs_score = extract_score_time_meta(gs_data)
+        if gs_meta["map_name"] != "UNKNOWN MAP":
+            map_name = gs_meta["map_name"]
+        if gs_meta["map_shortname"]:
+            map_shortname = gs_meta["map_shortname"]
+        if gs_meta["map_image_name"]:
+            map_image_name = gs_meta["map_image_name"]
+        if gs_score["allies_score"] is not None:
+            allies_score = gs_score["allies_score"]
+        if gs_score["axis_score"] is not None:
+            axis_score = gs_score["axis_score"]
+        if gs_score["time_remaining_sec"] is not None:
+            time_remaining_sec = gs_score["time_remaining_sec"]
+        if not map_bounds:
+            gs_bounds = extract_map_bounds(gs_data)
+            if gs_bounds:
+                map_bounds = gs_bounds
+                map_bounds_source = "gamestate"
     except Exception:
         pass
+
+    if not map_name:
+        map_name = "UNKNOWN MAP"
 
     return {
         "ts_unix": time.time(),
         "ts_iso": now_iso(),
         "map_name": map_name,
+        "map_shortname": map_shortname,
+        "map_image_name": map_image_name,
+        "allies_score": allies_score,
+        "axis_score": axis_score,
+        "time_remaining_sec": time_remaining_sec,
+        "map_bounds": map_bounds,
+        "map_bounds_source": map_bounds_source,
+        "projection": projection,
+        "map_view": map_view,
+        "player_view": player_view,
+        "player_colors": player_colors,
         "allied": allied_data,
         "axis": axis_data,
         "players": players,
@@ -303,6 +928,31 @@ def list_replays():
             }
         )
     entries.sort(key=lambda x: x["modified_unix"], reverse=True)
+    return entries
+
+
+def list_map_visual_files():
+    ensure_dirs()
+    entries = []
+    try:
+        names = os.listdir(MAPS_DIR)
+    except Exception:
+        names = []
+    for name in names:
+        full = os.path.join(MAPS_DIR, name)
+        if not os.path.isfile(full):
+            continue
+        stem, ext = os.path.splitext(name)
+        if ext.lower() not in MAP_VISUAL_EXTENSIONS:
+            continue
+        entries.append(
+            {
+                "name": name,
+                "stem": normalize_map_key(stem),
+                "url": f"/maps/{urllib.parse.quote(name)}",
+            }
+        )
+    entries.sort(key=lambda x: x["name"].lower())
     return entries
 
 
@@ -371,6 +1021,10 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True, "replays": list_replays()})
             return
 
+        if path == "/api/map_visuals":
+            self.send_json({"ok": True, "files": list_map_visual_files()})
+            return
+
         if path == "/api/replay":
             match_id = (query.get("id") or [""])[0]
             try:
@@ -407,8 +1061,32 @@ class PlayerMapHandler(SimpleHTTPRequestHandler):
             data = {}
 
         if path == "/api/config":
-            allowed = {"live_stats_url", "team_view_url", "gamestate_url", "cookie", "poll_interval_ms"}
+            allowed = {
+                "api_base_url",
+                "live_stats_url",
+                "team_view_url",
+                "gamestate_url",
+                "cookie",
+                "poll_interval_ms",
+                "map_bounds",
+                "projection",
+                "map_view",
+                "player_view",
+                "player_colors",
+            }
             update = {k: v for k, v in data.items() if k in allowed}
+            if "map_bounds" in update:
+                update["map_bounds"] = normalize_bounds(update.get("map_bounds")) or {}
+            if "projection" in update:
+                update["projection"] = normalize_projection(update.get("projection"))
+            if "map_view" in update:
+                update["map_view"] = normalize_map_view(update.get("map_view"))
+            if "player_view" in update:
+                update["player_view"] = normalize_player_view(update.get("player_view"))
+            if "player_colors" in update:
+                update["player_colors"] = normalize_player_colors(update.get("player_colors"))
+            if "api_base_url" in update:
+                update["api_base_url"] = normalize_api_base_url(update.get("api_base_url"))
             cfg = write_config(update)
             self.send_json({"ok": True, "config": cfg})
             return

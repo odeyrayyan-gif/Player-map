@@ -6,15 +6,17 @@
   <title>HLL Player Map App</title>
   <style>
     :root {
-      --bg: #0b1118;
-      --panel: #101a24;
-      --line: #223042;
-      --text: #dbe4f0;
-      --muted: #8ea2bb;
-      --accent: #5ac8fa;
-      --warn: #ffb347;
+      --bg: #050c06;
+      --panel: #0a1a0f;
+      --line: #1f6d35;
+      --text: #dff4e5;
+      --muted: #93c7a2;
+      --accent: #2f9e44;
+      --warn: #e7c04f;
       --red: #ff5f5f;
       --blue: #58a6ff;
+      --brand: #238334;
+      --brand-dark: #1a6a2b;
     }
     * { box-sizing: border-box; }
     body {
@@ -23,10 +25,40 @@
       color: var(--text);
       background: var(--bg);
     }
+    .brand-banner {
+      padding: 12px 14px;
+      border-bottom: 2px solid var(--line);
+      background: linear-gradient(180deg, #f3fff6 0%, #d7f7df 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 78px;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+    }
+    .brand-banner img {
+      width: min(980px, 96vw);
+      height: auto;
+      max-height: 88px;
+      object-fit: contain;
+      display: block;
+    }
+    .brand-fallback {
+      display: none;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      color: #1f6d35;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+      user-select: none;
+      text-transform: uppercase;
+    }
     .top {
-      padding: 12px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--line);
-      background: #0e151f;
+      background: #0d1f13;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
@@ -40,7 +72,7 @@
     .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
     .row:last-child { margin-bottom: 0; }
     input, select, button {
-      background: #0a1018;
+      background: #0a130d;
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -76,17 +108,28 @@
       font-size: 13px;
       color: var(--muted);
     }
+    .map-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .scoreline {
+      font-size: 12px;
+      color: var(--text);
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
     canvas {
       width: 100%;
       height: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: #0b121b;
+      background: #08120b;
       min-height: 0;
     }
     .right {
       display: grid;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto auto auto 1fr;
       gap: 12px;
       min-height: 0;
     }
@@ -106,16 +149,137 @@
     .tag { font-size: 11px; color: var(--muted); }
     .team-allies { color: var(--blue); }
     .team-axis { color: var(--red); }
+    .timeline-wrap {
+      margin-top: 2px;
+      display: grid;
+      gap: 6px;
+    }
+    .event-timeline {
+      position: relative;
+      height: 26px;
+      border: 1px solid #1f3b27;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #08140d 0%, #07110a 100%);
+      overflow: hidden;
+    }
+    .event-timeline .empty {
+      position: absolute;
+      left: 8px;
+      top: 5px;
+      font-size: 11px;
+      color: #6d967a;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      max-width: calc(100% - 16px);
+    }
+    .event-marker {
+      position: absolute;
+      top: 3px;
+      transform: translateX(-50%);
+      min-width: 8px;
+      height: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 0 2px;
+      font-size: 9px;
+      color: #041006;
+      font-weight: 700;
+      line-height: 16px;
+      text-align: center;
+      opacity: 0.88;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    }
+    .event-marker.score { background: #4edc7a; }
+    .event-marker.tank { background: #ff8a80; }
+    .event-marker.multi { background: #ffd166; }
+    .event-marker.wipe { background: #ff6b6b; }
+    .event-marker.objective { background: #6ee7f9; }
+    .event-marker.active {
+      opacity: 1;
+      outline: 1px solid rgba(255, 255, 255, 0.75);
+    }
+    .preset-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .preset-actions {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .preset-actions button { padding: 6px 8px; }
+    .vehicle-list {
+      display: grid;
+      gap: 5px;
+      max-height: 165px;
+      overflow: auto;
+      margin-top: 6px;
+    }
+    .vehicle-item {
+      font-size: 11px;
+      border: 1px solid #1f3b27;
+      border-radius: 6px;
+      padding: 6px;
+      background: #09150d;
+    }
+    .vehicle-item .v-name {
+      font-weight: 700;
+      color: #d8f5e0;
+    }
+    .vehicle-item .v-meta {
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .filter-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .filter-col {
+      display: grid;
+      gap: 4px;
+    }
+    .multi-select {
+      width: 100%;
+      min-height: 84px;
+      padding: 4px;
+      font-size: 11px;
+      background: #0a130d;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .selected-player {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 220px;
+      display: inline-block;
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body>
+  <div class="brand-banner" title="Pathfinders">
+    <img id="brandLogo" src="./maps/pathfinders_logo.png" alt="Pathfinders" />
+    <span id="brandLogoFallback" class="brand-fallback">Pathfinders</span>
+  </div>
   <div class="top">
     <div class="card">
       <div class="row">
-        <input id="liveStatsUrl" placeholder="Live stats URL (optional if team view URL provided)" />
+        <input id="apiBaseUrl" placeholder="API base URL (optional, e.g. http://HOST:PORT/api)" />
       </div>
       <div class="row">
-        <input id="teamViewUrl" placeholder="Team view URL (required)" />
+        <input id="liveStatsUrl" placeholder="Live stats URL (optional, auto-derived from API base if blank)" />
+      </div>
+      <div class="row">
+        <input id="teamViewUrl" placeholder="Team view URL (optional, auto-derived from API base if blank)" />
       </div>
       <div class="row">
         <input id="gamestateUrl" placeholder="Gamestate URL (optional)" />
@@ -127,6 +291,14 @@
         <input id="pollMs" placeholder="Poll interval ms (e.g. 2000)" style="max-width:180px" />
         <button id="saveCfgBtn">Save Config</button>
         <button id="testLiveBtn">Test Live</button>
+      </div>
+      <div class="row">
+        <label class="small"><input id="flipMapX" type="checkbox" /> flipMapX</label>
+        <label class="small"><input id="flipMapY" type="checkbox" /> flipMapY</label>
+        <label class="small"><input id="mirrorPlayersX" type="checkbox" /> mirror players L/R</label>
+        <label class="small"><input id="mirrorPlayersY" type="checkbox" /> mirror players U/D</label>
+        <input id="alliesColor" placeholder="Allies color (#58a6ff)" style="max-width:150px" />
+        <input id="axisColor" placeholder="Axis color (#ff5f5f)" style="max-width:150px" />
       </div>
     </div>
     <div class="card">
@@ -143,11 +315,30 @@
       <div class="row">
         <select id="replaySelect" style="flex:1"></select>
         <button id="loadReplayBtn">Load Replay</button>
+        <button id="exportAarBtn">Auto Export</button>
       </div>
       <div class="row">
         <button id="playBtn">Play</button>
         <button id="pauseBtn">Pause</button>
         <input id="timeline" type="range" min="0" max="0" value="0" />
+      </div>
+      <div class="row">
+        <label class="small"><input id="heatmapEnabled" type="checkbox" /> Heatmap</label>
+        <select id="heatmapWindowMin" style="max-width:110px">
+          <option value="5">5m</option>
+          <option value="10">10m</option>
+          <option value="25" selected>25m</option>
+          <option value="50">50m</option>
+          <option value="75">75m</option>
+          <option value="90">90m</option>
+        </select>
+        <label class="small"><input id="breadcrumbsEnabled" type="checkbox" /> Breadcrumbs</label>
+        <span id="selectedPlayer" class="selected-player">Selected: none</span>
+        <button id="clearSelectedPlayerBtn">Clear</button>
+      </div>
+      <div class="timeline-wrap">
+        <div class="tag">Replay timeline (score, TC deaths, multikill, wipes, objective swings)</div>
+        <div id="eventTimeline" class="event-timeline"><span class="empty">Load a replay to build timeline markers.</span></div>
       </div>
       <div class="status" id="status">Ready.</div>
     </div>
@@ -156,7 +347,10 @@
   <div class="main">
     <div class="map-wrap">
       <div class="map-head">
-        <div id="mapName">UNKNOWN MAP</div>
+        <div class="map-title">
+          <div id="mapName">UNKNOWN MAP</div>
+          <div id="scoreInfo" class="scoreline">Score n/a · Time n/a</div>
+        </div>
         <div id="frameInfo">No frame loaded</div>
       </div>
       <canvas id="mapCanvas"></canvas>
@@ -170,6 +364,38 @@
         <div class="tag">Recent actions</div>
         <div id="events"></div>
       </div>
+      <div class="card">
+        <div class="tag">Filters (hide non-selected)</div>
+        <div class="preset-row">
+          <select id="filterPresetSelect">
+            <option value="">No preset</option>
+          </select>
+          <button id="applyPresetBtn">Apply</button>
+          <button id="deletePresetBtn">Delete</button>
+        </div>
+        <div class="preset-row" style="grid-template-columns: 1fr auto auto;">
+          <input id="filterPresetName" placeholder="Preset name" />
+          <button id="savePresetBtn">Save</button>
+          <button id="clearPresetBtn">Clear</button>
+        </div>
+        <div class="row">
+          <input id="searchFilter" placeholder="Search name/role/squad" />
+        </div>
+        <div class="filter-grid">
+          <div class="filter-col">
+            <span class="small">Roles</span>
+            <select id="roleFilter" class="multi-select" multiple></select>
+          </div>
+          <div class="filter-col">
+            <span class="small">Squads</span>
+            <select id="squadFilter" class="multi-select" multiple></select>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="tag">Vehicle occupancy (filtered)</div>
+        <div id="vehicleSummary" class="vehicle-list"></div>
+      </div>
       <div class="card roster">
         <div class="tag">Players this frame</div>
         <div id="roster"></div>
@@ -179,6 +405,146 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const MAP_VISUAL_EXTENSIONS = ["webp", "png", "jpg", "jpeg"];
+    const MAP_LAYER_WORDS = new Set([
+      "warfare",
+      "offensive",
+      "skirmish",
+      "night",
+      "day",
+      "dusk",
+      "dawn",
+      "rain",
+      "snow",
+      "clear",
+      "us",
+      "usa",
+      "ger",
+      "germany",
+      "british",
+      "soviet",
+      "axis",
+      "allies",
+    ]);
+    // HLL-specific geometry assumptions:
+    // - world center is (0, 0)
+    // - map spans 10x10 grid cells
+    // - default full span is 100,000 world units (-50,000..50,000)
+    // - map images can include gray border around playable area
+    const HLL_PLAYABLE_BORDER_RATIO = 400 / (1000 + 800); // ~0.2222 inset each side
+    const HLL_GRID_CELLS = 10;
+    const HLL_WORLD_HALF = 50000;
+    const HLL_WORLD_MIN = -HLL_WORLD_HALF;
+    const HLL_WORLD_MAX = HLL_WORLD_HALF;
+    const HLL_WORLD_SIZE = HLL_WORLD_MAX - HLL_WORLD_MIN;
+    const HLL_STRIP_INSET_CELLS = 2;
+    const HLL_MAP_PLAYABLE_GRID_PRESETS = {
+      // St. Marie Du Mont:
+      // - columns C..H playable (A/B and I/J are out)
+      // - rows 1..10 playable
+      smdm: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
+      stmariedumont: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
+      stmariedumont_day_webp: { col_start: 3, col_end: 8, row_start: 1, row_end: 10 },
+    };
+    // User-provided orientation presets:
+    // - "horizontal" => top/bottom 2 rows unplayable (rows C..H playable)
+    // - "vertical" => left/right 2 cols unplayable (cols 3..8 playable)
+    const HLL_MAP_HORIZONTAL_SLUGS = new Set([
+      "carentan",
+      "elalamein",
+      "el_alamein",
+      "hill400",
+      "hill_400",
+      "hurtgen",
+      "hurtgenforest",
+      "hurtgen_forest",
+      "mortain",
+      "omaha",
+      "omahabeach",
+      "omaha_beach",
+      "sme",
+      "stmereeglise",
+      "st_mere_eglise",
+      "saintemereeglise",
+      "sainte_mere_eglise",
+      "stalingrad",
+      "tobruk",
+      "utah",
+      "utahbeach",
+      "utah_beach",
+    ]);
+    const HLL_MAP_VERTICAL_SLUGS = new Set([
+      "driel",
+      "elsenbornridge",
+      "elsenborn_ridge",
+      "foy",
+      "kharkov",
+      "kursk",
+      "phl",
+      "purpleheartlane",
+      "purple_heart_lane",
+      "remagen",
+      "smdm",
+      "stmariedumont",
+      "st_marie_du_mont",
+      "saintemariedumont",
+      "sainte_marie_du_mont",
+    ]);
+    // Playable-area world bounds calibration from user-provided corner anchors:
+    // - Horizontal sample map: Carentan (A3/J3/A8/J8)
+    // - Vertical sample map: Remagen (C1/H1/C10/H10)
+    // These are used as deterministic templates to avoid per-session stretch drift.
+    const HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS = {
+      // Centered on world origin (0,0) using user-provided corner anchors.
+      // Horizontal anchors (Carentan A3/J3/A8/J8) imply these half-extents:
+      //   xHalf=(|xMin|+|xMax|)/2 = 98454.4921875
+      //   yHalf=(|yMin|+|yMax|)/2 = 60478.94140625
+      horizontal: {
+        xMin: -98454.4921875,
+        xMax: 98454.4921875,
+        yMin: -60478.94140625,
+        yMax: 60478.94140625,
+      },
+      // Vertical anchors (Remagen C1/H1/C10/H10) imply these half-extents:
+      //   xHalf=(|xMin|+|xMax|)/2 = 59517.09375
+      //   yHalf=(|yMin|+|yMax|)/2 = 97104.99609375
+      vertical: {
+        xMin: -59517.09375,
+        xMax: 59517.09375,
+        yMin: -97104.99609375,
+        yMax: 97104.99609375,
+      },
+    };
+    const HLL_MAP_PLAYABLE_WORLD_BOUNDS_PRESETS = {
+      carentan: HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.horizontal,
+      remagen: HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.vertical,
+    };
+    // Player projection orientation presets for maps that need a hard lock.
+    // This is separate from map image view flips.
+    const HLL_MAP_PROJECTION_PRESETS = {
+      // Keep player projection un-rotated unless explicitly overridden.
+      sme: { flip_x: false, flip_y: false, swap_xy: false },
+    };
+    const MAP_SLUG_ALIASES = {
+      utahbeach: "utah",
+      utah_beach: "utah",
+      omahabeach: "omaha",
+      omaha_beach: "omaha",
+      stmereeglise: "sme",
+      st_mere_eglise: "sme",
+      saintemereeglise: "sme",
+      sainte_mere_eglise: "sme",
+      stmariedumont: "smdm",
+      st_marie_du_mont: "smdm",
+      saintemariedumont: "smdm",
+      sainte_marie_du_mont: "smdm",
+      purpleheartlane: "phl",
+      purple_heart_lane: "phl",
+      hurtgenforest: "hurtgen",
+      hurtgen_forest: "hurtgen",
+      elalamein: "el_alamein",
+      elsenbornridge: "elsenborn_ridge",
+    };
     const state = {
       mode: "live",
       liveTimer: null,
@@ -186,9 +552,19 @@
       frame: null,
       replayFrames: [],
       replayIndex: 0,
+      replayStartUnix: null,
+      replayStartIso: "",
       projected: [],
       events: [],
       lastFrame: null,
+      mapVisual: { key: "", status: "idle", img: null, src: "", playableRect: null, playableRectSource: "none" },
+      mapVisualCache: {},
+      mapVisualIndex: {},
+      liveHistory: [],
+      replayTimelineEvents: [],
+      selectedPlayerName: "",
+      selectedPlayerTeam: "",
+      lastDrawMeta: null,
     };
 
     async function api(path, options = {}) {
@@ -202,22 +578,32 @@
 
     function getCfgFromInputs() {
       return {
+        api_base_url: $("apiBaseUrl").value.trim(),
         live_stats_url: $("liveStatsUrl").value.trim(),
         team_view_url: $("teamViewUrl").value.trim(),
         gamestate_url: $("gamestateUrl").value.trim(),
         cookie: $("cookie").value.trim(),
         poll_interval_ms: Number($("pollMs").value || 2000),
+        map_bounds: {},
+        projection: { flip_x: false, flip_y: false, swap_xy: false, scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 },
+        map_view: getMapViewFromInputs(),
+        player_view: getPlayerViewFromInputs(),
+        player_colors: getPlayerColorsFromInputs(),
       };
     }
 
     async function loadConfig() {
       const j = await api("/api/config");
       const c = j.config || {};
+      $("apiBaseUrl").value = c.api_base_url || "";
       $("liveStatsUrl").value = c.live_stats_url || "";
       $("teamViewUrl").value = c.team_view_url || "";
       $("gamestateUrl").value = c.gamestate_url || "";
       $("cookie").value = c.cookie || "";
       $("pollMs").value = c.poll_interval_ms || 2000;
+      setMapViewInputs(c.map_view || null);
+      setPlayerViewInputs(c.player_view || null);
+      setPlayerColorsInputs(c.player_colors || null);
     }
 
     async function saveConfig() {
@@ -251,14 +637,1484 @@
       $("events").innerHTML = state.events.map(e => `<div class="event">${e}</div>`).join("");
     }
 
-    function detectBounds(players) {
+    function playerNameKey(name) {
+      return String(name || "").trim().toLowerCase();
+    }
+
+    function roleFilterLabel(role) {
+      const s = String(role || "").trim();
+      return s || "Unknown";
+    }
+
+    function squadFilterLabel(squad) {
+      const s = String(squad || "").trim();
+      return s || "No Squad";
+    }
+
+    function readSelectedMultiValues(selectId) {
+      const el = $(selectId);
+      if (!el) return new Set();
+      return new Set(Array.from(el.selectedOptions || []).map((o) => o.value));
+    }
+
+    const FILTER_PRESETS_STORAGE_KEY = "hll_map_filter_presets_v1";
+    const MULTIKILL_BURST_THRESHOLD = 2;
+    const RAPID_SQUAD_WIPE_DEATHS = 3;
+    const RAPID_SQUAD_WIPE_WINDOW_SEC = 45;
+
+    function getPlayerFilterState() {
+      return {
+        search: String($("searchFilter")?.value || "").trim().toLowerCase(),
+        roles: readSelectedMultiValues("roleFilter"),
+        squads: readSelectedMultiValues("squadFilter"),
+      };
+    }
+
+    function toArraySorted(setLike) {
+      return [...(setLike || new Set())].sort((a, b) => String(a).localeCompare(String(b)));
+    }
+
+    function getFilterSnapshot() {
+      const f = getPlayerFilterState();
+      return {
+        search: f.search || "",
+        roles: toArraySorted(f.roles),
+        squads: toArraySorted(f.squads),
+      };
+    }
+
+    function setSelectValues(selectId, values) {
+      const el = $(selectId);
+      if (!el) return;
+      const wanted = new Set((values || []).map((v) => String(v)));
+      for (const opt of Array.from(el.options || [])) {
+        opt.selected = wanted.has(String(opt.value));
+      }
+    }
+
+    function applyFilterSnapshot(snapshot) {
+      const s = (snapshot && typeof snapshot === "object") ? snapshot : {};
+      $("searchFilter").value = String(s.search || "");
+      setSelectValues("roleFilter", Array.isArray(s.roles) ? s.roles : []);
+      setSelectValues("squadFilter", Array.isArray(s.squads) ? s.squads : []);
+      refreshRenderedFrame();
+    }
+
+    function loadFilterPresets() {
+      try {
+        const raw = localStorage.getItem(FILTER_PRESETS_STORAGE_KEY);
+        const parsed = JSON.parse(raw || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function saveFilterPresets(presets) {
+      try {
+        localStorage.setItem(FILTER_PRESETS_STORAGE_KEY, JSON.stringify(presets || {}));
+      } catch (_) {
+        // Ignore storage failures in private/locked contexts.
+      }
+    }
+
+    function listFilterPresetNames(presets) {
+      return Object.keys(presets || {}).sort((a, b) => a.localeCompare(b));
+    }
+
+    function refreshFilterPresetSelect(preselect = "") {
+      const el = $("filterPresetSelect");
+      if (!el) return;
+      const presets = loadFilterPresets();
+      const names = listFilterPresetNames(presets);
+      const current = String(preselect || el.value || "");
+      el.innerHTML = `<option value="">No preset</option>`;
+      for (const name of names) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        if (name === current) opt.selected = true;
+        el.appendChild(opt);
+      }
+      if (!names.includes(current)) el.value = "";
+    }
+
+    function saveCurrentFilterPreset() {
+      const name = String($("filterPresetName")?.value || "").trim();
+      if (!name) {
+        setStatus("Enter a preset name first.");
+        return;
+      }
+      const presets = loadFilterPresets();
+      presets[name] = getFilterSnapshot();
+      saveFilterPresets(presets);
+      refreshFilterPresetSelect(name);
+      setStatus(`Saved filter preset: ${name}`);
+    }
+
+    function applySelectedFilterPreset() {
+      const name = String($("filterPresetSelect")?.value || "").trim();
+      if (!name) {
+        setStatus("Select a preset to apply.");
+        return;
+      }
+      const presets = loadFilterPresets();
+      const snapshot = presets[name];
+      if (!snapshot) {
+        setStatus(`Preset not found: ${name}`);
+        refreshFilterPresetSelect("");
+        return;
+      }
+      applyFilterSnapshot(snapshot);
+      $("filterPresetName").value = name;
+      setStatus(`Applied filter preset: ${name}`);
+    }
+
+    function deleteSelectedFilterPreset() {
+      const name = String($("filterPresetSelect")?.value || "").trim();
+      if (!name) {
+        setStatus("Select a preset to delete.");
+        return;
+      }
+      const presets = loadFilterPresets();
+      if (!Object.prototype.hasOwnProperty.call(presets, name)) {
+        setStatus(`Preset not found: ${name}`);
+        refreshFilterPresetSelect("");
+        return;
+      }
+      delete presets[name];
+      saveFilterPresets(presets);
+      refreshFilterPresetSelect("");
+      if ($("filterPresetName")) $("filterPresetName").value = "";
+      setStatus(`Deleted filter preset: ${name}`);
+    }
+
+    function clearAllFilters() {
+      applyFilterSnapshot({ search: "", roles: [], squads: [] });
+      if ($("filterPresetSelect")) $("filterPresetSelect").value = "";
+      setStatus("Filters cleared.");
+    }
+
+    function inferVehicleBucket(player) {
+      const direct = String(player?.vehicle || "").trim();
+      if (direct) return direct;
+      const role = normalizeRoleForCompare(player?.role);
+      if (role === "tankcommander" || role === "crewman") return "Armor (unspecified vehicle)";
+      if (role === "armycommander" || role === "commander") return "Command";
+      return "";
+    }
+
+    function renderVehicleSummary(frame) {
+      const wrap = $("vehicleSummary");
+      if (!wrap) return;
+      if (!frame || typeof frame !== "object") {
+        wrap.innerHTML = `<div class="tag">No frame loaded.</div>`;
+        return;
+      }
+      const players = getDisplayedPlayers(frame, getPlayerFilterState());
+      const groups = new Map();
+      for (const p of players) {
+        const vehicleName = inferVehicleBucket(p);
+        if (!vehicleName) continue;
+        const key = vehicleName.toLowerCase();
+        const cur = groups.get(key) || {
+          name: vehicleName,
+          count: 0,
+          teams: new Set(),
+          roleCounts: new Map(),
+          names: new Set(),
+        };
+        cur.count += 1;
+        cur.teams.add(String(p.team || "unknown").trim().toLowerCase());
+        const role = roleFilterLabel(p.role);
+        cur.roleCounts.set(role, (cur.roleCounts.get(role) || 0) + 1);
+        if (p.name) cur.names.add(String(p.name));
+        groups.set(key, cur);
+      }
+
+      const items = [...groups.values()].sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
+      if (!items.length) {
+        wrap.innerHTML = `<div class="tag">No filtered players with vehicle data.</div>`;
+        return;
+      }
+      wrap.innerHTML = items.slice(0, 40).map((g) => {
+        const roles = [...g.roleCounts.entries()]
+          .sort((a, b) => (b[1] - a[1]) || String(a[0]).localeCompare(String(b[0])))
+          .slice(0, 3)
+          .map(([role, c]) => `${role}×${c}`)
+          .join(" · ");
+        const teams = [...g.teams].map((t) => (t === "axis" ? "Axis" : (t === "allies" ? "Allies" : t))).join("/");
+        return `<div class="vehicle-item">
+          <div class="v-name">${g.name} <span class="tag">(${g.count})</span></div>
+          <div class="v-meta">${teams || "Unknown team"}${roles ? ` · ${roles}` : ""}</div>
+        </div>`;
+      }).join("");
+    }
+
+    function playerMatchesFilters(player, filterState) {
+      const f = filterState || getPlayerFilterState();
+      const role = roleFilterLabel(player?.role);
+      const squad = squadFilterLabel(player?.squad);
+      if (f.roles.size && !f.roles.has(role)) return false;
+      if (f.squads.size && !f.squads.has(squad)) return false;
+      if (f.search) {
+        const hay = [
+          String(player?.name || ""),
+          String(player?.role || ""),
+          String(player?.squad || ""),
+          String(player?.team || ""),
+        ].join(" ").toLowerCase();
+        if (!hay.includes(f.search)) return false;
+      }
+      return true;
+    }
+
+    function getDisplayedPlayers(frame, filterState = null) {
+      const players = frame?.players || [];
+      const f = filterState || getPlayerFilterState();
+      return players.filter((p) => playerMatchesFilters(p, f));
+    }
+
+    function refillMultiSelect(selectId, values) {
+      const el = $(selectId);
+      if (!el) return;
+      const prevSelected = readSelectedMultiValues(selectId);
+      const sorted = [...values].sort((a, b) => a.localeCompare(b));
+      el.innerHTML = "";
+      for (const v of sorted) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        if (prevSelected.has(v)) opt.selected = true;
+        el.appendChild(opt);
+      }
+    }
+
+    function updateFilterOptions(frame) {
+      const players = frame?.players || [];
+      const roles = new Set(players.map((p) => roleFilterLabel(p?.role)));
+      const squads = new Set(players.map((p) => squadFilterLabel(p?.squad)));
+      refillMultiSelect("roleFilter", roles);
+      refillMultiSelect("squadFilter", squads);
+    }
+
+    function updateSelectedPlayerLabel() {
+      const el = $("selectedPlayer");
+      if (!el) return;
+      if (!state.selectedPlayerName) {
+        el.textContent = "Selected: none";
+        return;
+      }
+      const team = String(state.selectedPlayerTeam || "").trim();
+      const suffix = team ? ` (${team})` : "";
+      el.textContent = `Selected: ${state.selectedPlayerName}${suffix}`;
+    }
+
+    function normalizeRoleForCompare(role) {
+      return String(role || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    }
+
+    function isTankCommanderRole(role) {
+      return normalizeRoleForCompare(role) === "tankcommander";
+    }
+
+    function isCommanderRole(role, squad) {
+      const r = normalizeRoleForCompare(role);
+      if (r === "armycommander" || r === "commander") return true;
+      const s = String(squad || "").trim().toLowerCase();
+      return s === "command";
+    }
+
+    function drawCommanderTriangleDots(ctx, x, y) {
+      // Distinct commander badge: three small dots in a triangle.
+      const points = [
+        { dx: 0, dy: -2.4 },
+        { dx: -2.6, dy: 1.9 },
+        { dx: 2.6, dy: 1.9 },
+      ];
+      for (const pt of points) {
+        ctx.beginPath();
+        ctx.arc(x + pt.dx, y + pt.dy, 1.35, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.95)";
+        ctx.fill();
+      }
+    }
+
+    function playerIdentityKey(player) {
+      const name = playerNameKey(player?.name);
+      const team = String(player?.team || "").trim().toLowerCase();
+      return `${name}|${team}`;
+    }
+
+    function frameUnix(frame) {
+      const ts = Number(frame?.ts_unix);
+      if (Number.isFinite(ts)) return ts;
+      if (frame?.ts_iso) {
+        const d = new Date(frame.ts_iso);
+        const n = d.getTime();
+        if (!Number.isNaN(n)) return n / 1000;
+      }
+      return null;
+    }
+
+    function getPrimaryMapSlug(frame) {
+      const candidates = getMapSlugCandidates(frame);
+      return candidates[0] || "";
+    }
+
+    function updateLiveHistory(frame) {
+      if (!frame || typeof frame !== "object") return;
+      state.liveHistory.push(frame);
+      if (state.liveHistory.length > 6000) {
+        state.liveHistory.splice(0, state.liveHistory.length - 6000);
+      }
+    }
+
+    function getHistoryFramesForWindow(currentFrame) {
+      const source = (state.mode === "replay" && state.replayFrames.length)
+        ? state.replayFrames.slice(0, state.replayIndex + 1)
+        : state.liveHistory;
+      if (!source.length) return [];
+      const currentTs = frameUnix(currentFrame);
+      const minsRaw = Number($("heatmapWindowMin")?.value || 25);
+      const mins = Number.isFinite(minsRaw) ? Math.max(1, minsRaw) : 25;
+      let filtered = source;
+      if (Number.isFinite(currentTs)) {
+        const cutoff = currentTs - (mins * 60);
+        filtered = source.filter((f) => {
+          const ts = frameUnix(f);
+          return !Number.isFinite(ts) || ts >= cutoff;
+        });
+      }
+      const curMap = getPrimaryMapSlug(currentFrame);
+      if (curMap) {
+        filtered = filtered.filter((f) => getPrimaryMapSlug(f) === curMap);
+      }
+      if (filtered.length > 900) {
+        const step = Math.ceil(filtered.length / 900);
+        filtered = filtered.filter((_, idx) => idx % step === 0 || idx === filtered.length - 1);
+      }
+      return filtered;
+    }
+
+    function objectiveTextFromCandidate(value) {
+      if (value == null) return "";
+      if (typeof value === "string" || typeof value === "number") {
+        const t = String(value).trim();
+        return t.length ? t : "";
+      }
+      if (typeof value === "object") {
+        for (const key of ["name", "pretty_name", "id", "label", "sector", "strongpoint", "objective"]) {
+          const nested = objectiveTextFromCandidate(value[key]);
+          if (nested) return nested;
+        }
+      }
+      return "";
+    }
+
+    function extractObjectiveLabel(frame) {
+      const f = (frame && typeof frame === "object") ? frame : {};
+      const topKeys = [
+        "objective",
+        "objective_name",
+        "active_objective",
+        "current_objective",
+        "sector",
+        "active_sector",
+        "current_sector",
+        "strongpoint",
+        "strong_point",
+        "capture_point",
+        "frontline",
+      ];
+      for (const key of topKeys) {
+        const text = objectiveTextFromCandidate(f[key]);
+        if (text) return text;
+      }
+      const nestedObjs = [f.gamestate, f.current_map, f.map, f.allied, f.axis];
+      for (const obj of nestedObjs) {
+        if (!obj || typeof obj !== "object") continue;
+        for (const key of topKeys) {
+          const text = objectiveTextFromCandidate(obj[key]);
+          if (text) return text;
+        }
+      }
+      return "";
+    }
+
+    function detectObjectiveSwingDelta(prev, curr) {
+      const prevA = Number(prev?.allies_score);
+      const prevX = Number(prev?.axis_score);
+      const currA = Number(curr?.allies_score);
+      const currX = Number(curr?.axis_score);
+      if (!Number.isFinite(prevA) || !Number.isFinite(prevX) || !Number.isFinite(currA) || !Number.isFinite(currX)) {
+        return null;
+      }
+      const dA = currA - prevA;
+      const dX = currX - prevX;
+      const swing = Math.abs(dA - dX);
+      if (swing >= 6 || Math.abs(dA) >= 5 || Math.abs(dX) >= 5) {
+        return { dA, dX, swing };
+      }
+      return null;
+    }
+
+    function buildPlayerDeltaMap(prev, curr) {
+      const prevPlayers = new Map((prev?.players || []).map((p) => [playerIdentityKey(p), p]));
+      const deltas = [];
+      for (const p of (curr?.players || [])) {
+        const old = prevPlayers.get(playerIdentityKey(p));
+        if (!old) continue;
+        const kills = Number(p.kills || 0) - Number(old.kills || 0);
+        const deaths = Number(p.deaths || 0) - Number(old.deaths || 0);
+        if (!kills && !deaths) continue;
+        deltas.push({
+          name: p.name || old.name || "Unknown",
+          role: p.role || old.role || "",
+          squad: p.squad || old.squad || "",
+          team: p.team || old.team || "",
+          kills,
+          deaths,
+        });
+      }
+      return deltas;
+    }
+
+    function buildReplayTimelineEvents(frames) {
+      if (!Array.isArray(frames) || frames.length < 2) return [];
+      const out = [];
+      const squadDeathHistory = new Map();
+      const lastWipeAt = new Map();
+
+      for (let i = 1; i < frames.length; i++) {
+        const prev = frames[i - 1] || {};
+        const curr = frames[i] || {};
+        const ts = Number.isFinite(frameUnix(curr)) ? Number(frameUnix(curr)) : i;
+
+        const prevA = Number(prev.allies_score);
+        const prevX = Number(prev.axis_score);
+        const currA = Number(curr.allies_score);
+        const currX = Number(curr.axis_score);
+        if (
+          Number.isFinite(prevA) && Number.isFinite(prevX) &&
+          Number.isFinite(currA) && Number.isFinite(currX) &&
+          (currA !== prevA || currX !== prevX)
+        ) {
+          out.push({
+            index: i,
+            kind: "score",
+            label: "S",
+            title: `Score jump: ${prevA}-${prevX} -> ${currA}-${currX}`,
+          });
+        }
+
+        const deltas = buildPlayerDeltaMap(prev, curr);
+        for (const d of deltas) {
+          if (d.deaths > 0 && isTankCommanderRole(d.role)) {
+            out.push({
+              index: i,
+              kind: "tank",
+              label: "T",
+              title: `Tank commander death: ${d.name} (+${d.deaths} death${d.deaths > 1 ? "s" : ""})`,
+            });
+          }
+          if (d.kills >= MULTIKILL_BURST_THRESHOLD) {
+            out.push({
+              index: i,
+              kind: "multi",
+              label: "M",
+              title: `Multi-kill burst: ${d.name} (+${d.kills} kills)`,
+            });
+          }
+        }
+
+        const deathsBySquad = new Map();
+        for (const d of deltas) {
+          if (d.deaths <= 0) continue;
+          const squad = squadFilterLabel(d.squad);
+          const team = String(d.team || "unknown").toLowerCase();
+          const key = `${team}|${squad}`;
+          const agg = deathsBySquad.get(key) || { team, squad, deaths: 0, names: new Set() };
+          agg.deaths += d.deaths;
+          agg.names.add(d.name || "Unknown");
+          deathsBySquad.set(key, agg);
+        }
+        for (const [key, agg] of deathsBySquad.entries()) {
+          const hist = squadDeathHistory.get(key) || [];
+          hist.push({ ts, deaths: agg.deaths, names: new Set(agg.names) });
+          const pruned = hist.filter((x) => (ts - x.ts) <= RAPID_SQUAD_WIPE_WINDOW_SEC);
+          squadDeathHistory.set(key, pruned);
+          let totalDeaths = 0;
+          const uniq = new Set();
+          for (const item of pruned) {
+            totalDeaths += Number(item.deaths || 0);
+            for (const n of item.names || []) uniq.add(n);
+          }
+          const lastAt = lastWipeAt.get(key);
+          const ready = (lastAt == null) || ((ts - lastAt) > (RAPID_SQUAD_WIPE_WINDOW_SEC / 2));
+          if (ready && totalDeaths >= RAPID_SQUAD_WIPE_DEATHS && uniq.size >= 2) {
+            out.push({
+              index: i,
+              kind: "wipe",
+              label: "W",
+              title: `Rapid squad wipe: ${agg.squad} (${agg.team}) ${totalDeaths} deaths / ${uniq.size} players in ${RAPID_SQUAD_WIPE_WINDOW_SEC}s`,
+            });
+            lastWipeAt.set(key, ts);
+          }
+        }
+
+        const prevObj = extractObjectiveLabel(prev);
+        const currObj = extractObjectiveLabel(curr);
+        if (prevObj && currObj && prevObj !== currObj) {
+          out.push({
+            index: i,
+            kind: "objective",
+            label: "O",
+            title: `Objective/sector changed: ${prevObj} -> ${currObj}`,
+          });
+        } else {
+          const swing = detectObjectiveSwingDelta(prev, curr);
+          if (swing) {
+            out.push({
+              index: i,
+              kind: "objective",
+              label: "O",
+              title: `Objective/sector swing heuristic: Allies ${swing.dA >= 0 ? "+" : ""}${swing.dA}, Axis ${swing.dX >= 0 ? "+" : ""}${swing.dX} (swing ${swing.swing})`,
+            });
+          }
+        }
+      }
+      if (out.length > 600) {
+        return out.slice(out.length - 600);
+      }
+      return out;
+    }
+
+    function renderReplayTimeline() {
+      const wrap = $("eventTimeline");
+      if (!wrap) return;
+      wrap.innerHTML = "";
+      if (state.mode !== "replay" || !state.replayFrames.length) {
+        wrap.innerHTML = `<span class="empty">Load a replay to build timeline markers.</span>`;
+        return;
+      }
+      const events = state.replayTimelineEvents || [];
+      if (!events.length) {
+        wrap.innerHTML = `<span class="empty">No score/tank/multikill/wipe/objective markers detected in this replay.</span>`;
+        return;
+      }
+      const denom = Math.max(1, state.replayFrames.length - 1);
+      for (const ev of events) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `event-marker ${ev.kind}${ev.index === state.replayIndex ? " active" : ""}`;
+        const pct = (Math.max(0, Math.min(denom, ev.index)) / denom) * 100;
+        btn.style.left = `${Math.max(1, Math.min(99, pct))}%`;
+        const frame = state.replayFrames[ev.index];
+        const elapsed = formatReplayElapsed(frame, state.replayStartUnix);
+        btn.title = `${ev.title} @ ${elapsed}`;
+        btn.textContent = ev.label;
+        btn.dataset.index = String(ev.index);
+        wrap.appendChild(btn);
+      }
+    }
+
+    function makeTeamLabel(team) {
+      const t = String(team || "").trim().toLowerCase();
+      if (t === "allies") return "Allies";
+      if (t === "axis") return "Axis";
+      return t || "Unknown";
+    }
+
+    function buildAutoExportSummary() {
+      const frames = state.replayFrames || [];
+      const timelineEvents = state.replayTimelineEvents || [];
+      const frameCount = frames.length;
+      const replayId = String($("replaySelect")?.value || "").trim() || "replay";
+      const mapName = String(frames[0]?.map_name || state.frame?.map_name || "UNKNOWN MAP");
+      const startedAt = frames[0]?.ts_iso || "";
+      const endedAt = frames[frameCount - 1]?.ts_iso || "";
+      const durationSec = (() => {
+        if (!frameCount) return 0;
+        const a = frameUnix(frames[0]);
+        const b = frameUnix(frames[frameCount - 1]);
+        if (Number.isFinite(a) && Number.isFinite(b) && b >= a) return Math.floor(b - a);
+        return 0;
+      })();
+
+      const last = frames[frameCount - 1] || {};
+      const score = {
+        allies: Number.isFinite(Number(last.allies_score)) ? Number(last.allies_score) : null,
+        axis: Number.isFinite(Number(last.axis_score)) ? Number(last.axis_score) : null,
+      };
+
+      const latestByPlayer = new Map();
+      for (const f of frames) {
+        for (const p of (f.players || [])) {
+          latestByPlayer.set(playerIdentityKey(p), p);
+        }
+      }
+      const players = [...latestByPlayer.values()];
+      const topKills = [...players]
+        .sort((a, b) => Number(b.kills || 0) - Number(a.kills || 0))
+        .slice(0, 10)
+        .map((p) => ({
+          name: p.name || "Unknown",
+          team: p.team || "",
+          role: p.role || "",
+          squad: p.squad || "",
+          kills: Number(p.kills || 0),
+          deaths: Number(p.deaths || 0),
+        }));
+
+      const roles = {};
+      for (const p of players) {
+        const role = roleFilterLabel(p.role);
+        roles[role] = (roles[role] || 0) + 1;
+      }
+
+      const markerCounts = {};
+      for (const ev of timelineEvents) {
+        const k = String(ev.kind || "other");
+        markerCounts[k] = (markerCounts[k] || 0) + 1;
+      }
+
+      return {
+        generated_at_iso: new Date().toISOString(),
+        replay_id: replayId,
+        map_name: mapName,
+        frame_count: frameCount,
+        duration_sec: durationSec,
+        started_at_iso: startedAt,
+        ended_at_iso: endedAt,
+        final_score: score,
+        marker_counts: markerCounts,
+        filters_snapshot: getFilterSnapshot(),
+        top_players_by_kills: topKills,
+        role_distribution: roles,
+        timeline_events: timelineEvents.map((ev) => ({
+          index: ev.index,
+          kind: ev.kind,
+          label: ev.label,
+          title: ev.title,
+          ts_unix: frameUnix(frames[ev.index]),
+          ts_iso: frames[ev.index]?.ts_iso || "",
+          replay_elapsed: formatReplayElapsed(frames[ev.index], state.replayStartUnix),
+        })),
+      };
+    }
+
+    function escapeCsv(value) {
+      const s = String(value ?? "");
+      if (/[",\n]/.test(s)) return `"${s.replace(/"/g, "\"\"")}"`;
+      return s;
+    }
+
+    function buildAutoExportCsv(summary) {
+      const rows = [];
+      rows.push(["replay_id", summary.replay_id]);
+      rows.push(["map_name", summary.map_name]);
+      rows.push(["frame_count", summary.frame_count]);
+      rows.push(["duration_sec", summary.duration_sec]);
+      rows.push(["final_allies_score", summary.final_score?.allies ?? ""]);
+      rows.push(["final_axis_score", summary.final_score?.axis ?? ""]);
+      rows.push(["generated_at_iso", summary.generated_at_iso]);
+      rows.push([]);
+      rows.push(["timeline_index", "elapsed", "kind", "label", "title", "ts_iso"]);
+      for (const ev of summary.timeline_events || []) {
+        rows.push([ev.index, ev.replay_elapsed, ev.kind, ev.label, ev.title, ev.ts_iso]);
+      }
+      rows.push([]);
+      rows.push(["top_player_name", "team", "role", "squad", "kills", "deaths"]);
+      for (const p of summary.top_players_by_kills || []) {
+        rows.push([p.name, p.team, p.role, p.squad, p.kills, p.deaths]);
+      }
+      return rows.map((r) => r.map(escapeCsv).join(",")).join("\n");
+    }
+
+    function downloadTextFile(filename, text, contentType = "text/plain;charset=utf-8") {
+      const blob = new Blob([text], { type: contentType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    function exportAutoAar() {
+      if (!state.replayFrames.length) {
+        setStatus("Load a replay before exporting.");
+        return;
+      }
+      const summary = buildAutoExportSummary();
+      const safeId = String(summary.replay_id || "replay").replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const stamp = new Date().toISOString().replace(/[:]/g, "-");
+      const jsonName = `${safeId}_aar_${stamp}.json`;
+      const csvName = `${safeId}_timeline_${stamp}.csv`;
+      downloadTextFile(jsonName, JSON.stringify(summary, null, 2), "application/json;charset=utf-8");
+      downloadTextFile(csvName, buildAutoExportCsv(summary), "text/csv;charset=utf-8");
+      setStatus(`Auto export complete: ${jsonName} + ${csvName}`);
+    }
+
+    function connectFilterPresetControls() {
+      const applyBtn = $("applyPresetBtn");
+      const saveBtn = $("savePresetBtn");
+      const deleteBtn = $("deletePresetBtn");
+      const clearBtn = $("clearPresetBtn");
+      const presetSel = $("filterPresetSelect");
+
+      if (applyBtn) applyBtn.addEventListener("click", applySelectedFilterPreset);
+      if (saveBtn) saveBtn.addEventListener("click", saveCurrentFilterPreset);
+      if (deleteBtn) deleteBtn.addEventListener("click", deleteSelectedFilterPreset);
+      if (clearBtn) clearBtn.addEventListener("click", clearAllFilters);
+      if (presetSel) {
+        presetSel.addEventListener("change", () => {
+          const v = String(presetSel.value || "").trim();
+          if ($("filterPresetName")) $("filterPresetName").value = v;
+        });
+      }
+      refreshFilterPresetSelect();
+    }
+
+    function refreshRenderedFrame() {
+      if (!state.frame) return;
+      drawFrame(state.frame);
+      renderRoster(state.frame);
+      renderVehicleSummary(state.frame);
+      renderReplayTimeline();
+    }
+
+    function worldToScreen(worldPos, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale) {
+      const wp = projectWorld(worldPos, frame);
+      if (!wp || !bounds || !playableViewport) return null;
+      const rawX = playableViewport.x + project(wp.x, bounds.xMin, bounds.xMax, playableViewport.w);
+      const rawY = playableViewport.y + project(wp.y, bounds.yMin, bounds.yMax, playableViewport.h);
+      const x = mapCenterX + ((rawX - mapCenterX) * zoomScale);
+      const y = mapCenterY + ((rawY - mapCenterY) * zoomScale);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return { x, y, wp };
+    }
+
+    function drawHeatmapOverlay(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale, filterState) {
+      if (!$("heatmapEnabled")?.checked) return;
+      const history = getHistoryFramesForWindow(frame);
+      if (!history.length) return;
+      const cols = 56;
+      const rows = 56;
+      const bins = new Uint16Array(cols * rows);
+      let maxBin = 0;
+      for (const f of history) {
+        for (const p of getDisplayedPlayers(f, filterState)) {
+          const s = worldToScreen(p.world_position, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+          if (!s) continue;
+          const nx = (s.wp.x - bounds.xMin) / Math.max(1e-9, bounds.xMax - bounds.xMin);
+          const ny = (s.wp.y - bounds.yMin) / Math.max(1e-9, bounds.yMax - bounds.yMin);
+          if (nx < 0 || nx > 1 || ny < 0 || ny > 1) continue;
+          const xi = Math.max(0, Math.min(cols - 1, Math.floor(nx * cols)));
+          const yi = Math.max(0, Math.min(rows - 1, Math.floor(ny * rows)));
+          const idx = yi * cols + xi;
+          bins[idx] += 1;
+          if (bins[idx] > maxBin) maxBin = bins[idx];
+        }
+      }
+      if (maxBin <= 0) return;
+      const cellW = (playableViewport.w / cols) * zoomScale;
+      const cellH = (playableViewport.h / rows) * zoomScale;
+      if (cellW <= 0 || cellH <= 0) return;
+      ctx.save();
+      for (let yi = 0; yi < rows; yi++) {
+        for (let xi = 0; xi < cols; xi++) {
+          const count = bins[yi * cols + xi];
+          if (!count) continue;
+          const intensity = Math.pow(count / maxBin, 0.58);
+          const alpha = 0.05 + (0.4 * intensity);
+          const rawX = playableViewport.x + ((xi / cols) * playableViewport.w);
+          const rawY = playableViewport.y + ((yi / rows) * playableViewport.h);
+          const x = mapCenterX + ((rawX - mapCenterX) * zoomScale);
+          const y = mapCenterY + ((rawY - mapCenterY) * zoomScale);
+          ctx.fillStyle = `rgba(255, 136, 44, ${alpha.toFixed(3)})`;
+          ctx.fillRect(x, y, cellW + 0.25, cellH + 0.25);
+        }
+      }
+      ctx.restore();
+    }
+
+    function selectedPlayerMatches(player) {
+      if (!state.selectedPlayerName) return false;
+      const nameOk = playerNameKey(player?.name) === playerNameKey(state.selectedPlayerName);
+      if (!nameOk) return false;
+      if (!state.selectedPlayerTeam) return true;
+      return String(player?.team || "").trim().toLowerCase() === String(state.selectedPlayerTeam || "").trim().toLowerCase();
+    }
+
+    function getSelectedPlayerTrackPoints(frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale) {
+      if (!state.selectedPlayerName) return [];
+      const source = (state.mode === "replay" && state.replayFrames.length)
+        ? state.replayFrames.slice(0, state.replayIndex + 1)
+        : getHistoryFramesForWindow(frame);
+      if (!source.length) return [];
+      const mapSlug = getPrimaryMapSlug(frame);
+      const out = [];
+      for (const f of source) {
+        if (mapSlug && getPrimaryMapSlug(f) !== mapSlug) continue;
+        for (const p of (f.players || [])) {
+          if (!selectedPlayerMatches(p)) continue;
+          const s = worldToScreen(p.world_position, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+          if (s) out.push({ x: s.x, y: s.y });
+          break;
+        }
+      }
+      return out;
+    }
+
+    function drawBreadcrumbTrail(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale) {
+      if (!$("breadcrumbsEnabled")?.checked) return;
+      const points = getSelectedPlayerTrackPoints(frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+      if (points.length < 2) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      const stride = Math.max(4, Math.floor(points.length / 35));
+      for (let i = 0; i < points.length; i += stride) {
+        const pt = points[i];
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+        ctx.fill();
+      }
+      const tail = points[points.length - 1];
+      ctx.beginPath();
+      ctx.arc(tail.x, tail.y, 4.2, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function findNearestProjectedPlayer(mx, my, maxDist = 12) {
+      let best = null;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const node of state.projected || []) {
+        const dx = node.x - mx;
+        const dy = node.y - my;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < bestDist) {
+          bestDist = d;
+          best = node;
+        }
+      }
+      if (!best || bestDist > maxDist) return null;
+      return best;
+    }
+
+    function bindCanvasSelection() {
+      const canvas = $("mapCanvas");
+      if (!canvas) return;
+      canvas.addEventListener("click", (ev) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = ev.clientX - rect.left;
+        const my = ev.clientY - rect.top;
+        const node = findNearestProjectedPlayer(mx, my, 14);
+        if (!node) return;
+        state.selectedPlayerName = node.p?.name || "";
+        state.selectedPlayerTeam = node.p?.team || "";
+        updateSelectedPlayerLabel();
+        refreshRenderedFrame();
+      });
+    }
+
+    function bindFeatureControls() {
+      const controls = ["heatmapEnabled", "heatmapWindowMin", "breadcrumbsEnabled", "searchFilter", "roleFilter", "squadFilter"];
+      for (const id of controls) {
+        const el = $(id);
+        if (!el) continue;
+        const eventName = id === "searchFilter" ? "input" : "change";
+        el.addEventListener(eventName, () => refreshRenderedFrame());
+      }
+      const clearSelectedBtn = $("clearSelectedPlayerBtn");
+      if (clearSelectedBtn) {
+        clearSelectedBtn.addEventListener("click", () => {
+          state.selectedPlayerName = "";
+          state.selectedPlayerTeam = "";
+          updateSelectedPlayerLabel();
+          refreshRenderedFrame();
+        });
+      }
+      const applyBtn = $("applyPresetBtn");
+      const saveBtn = $("savePresetBtn");
+      const deleteBtn = $("deletePresetBtn");
+      const clearFiltersBtn = $("clearPresetBtn");
+      const presetSelect = $("filterPresetSelect");
+      const exportBtn = $("exportAarBtn");
+      if (applyBtn) applyBtn.addEventListener("click", applySelectedFilterPreset);
+      if (saveBtn) saveBtn.addEventListener("click", saveCurrentFilterPreset);
+      if (deleteBtn) deleteBtn.addEventListener("click", deleteSelectedFilterPreset);
+      if (clearFiltersBtn) clearFiltersBtn.addEventListener("click", clearAllFilters);
+      if (presetSelect) {
+        presetSelect.addEventListener("change", () => {
+          const v = String(presetSelect.value || "");
+          if ($("filterPresetName")) $("filterPresetName").value = v;
+        });
+      }
+      if (exportBtn) exportBtn.addEventListener("click", exportAutoAar);
+      const timeline = $("eventTimeline");
+      if (timeline) {
+        timeline.addEventListener("click", (ev) => {
+          const marker = ev.target.closest(".event-marker");
+          if (!marker) return;
+          if (state.mode !== "replay") return;
+          const idx = Number(marker.dataset.index);
+          if (!Number.isFinite(idx)) return;
+          showReplayIndex(idx);
+        });
+      }
+    }
+
+    function normalizeMapView(raw) {
+      const r = (raw && typeof raw === "object") ? raw : {};
+      return {
+        flip_x: Boolean(r.flip_x),
+        flip_y: Boolean(r.flip_y),
+      };
+    }
+
+    function setMapViewInputs(raw) {
+      const mv = normalizeMapView(raw);
+      $("flipMapX").checked = mv.flip_x;
+      $("flipMapY").checked = mv.flip_y;
+    }
+
+    function getMapViewFromInputs() {
+      return {
+        flip_x: $("flipMapX").checked,
+        flip_y: $("flipMapY").checked,
+      };
+    }
+
+
+    function normalizePlayerView(raw) {
+      const r = (raw && typeof raw === "object") ? raw : {};
+      return {
+        mirror_x: Boolean(r.mirror_x),
+        mirror_y: Boolean(r.mirror_y),
+      };
+    }
+
+    function setPlayerViewInputs(raw) {
+      const pv = normalizePlayerView(raw);
+      $("mirrorPlayersX").checked = pv.mirror_x;
+      $("mirrorPlayersY").checked = pv.mirror_y;
+    }
+
+    function getPlayerViewFromInputs() {
+      return {
+        mirror_x: $("mirrorPlayersX").checked,
+        mirror_y: $("mirrorPlayersY").checked,
+      };
+    }
+
+    const DEFAULT_PLAYER_COLORS = { allies: "#58a6ff", axis: "#ff5f5f" };
+
+    function normalizeHexColor(raw, fallback) {
+      const s = String(raw || "").trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+      return fallback;
+    }
+
+    function normalizePlayerColors(raw) {
+      const r = (raw && typeof raw === "object") ? raw : {};
+      return {
+        allies: normalizeHexColor(r.allies, DEFAULT_PLAYER_COLORS.allies),
+        axis: normalizeHexColor(r.axis, DEFAULT_PLAYER_COLORS.axis),
+      };
+    }
+
+    function isTankRole(role) {
+      const r = String(role || "").toLowerCase();
+      return r.includes("tank commander") || r.includes("tankcommander") || r.includes("crewman");
+    }
+
+    function getSquadInitial(squad, fallbackName = "") {
+      const text = String(squad || "").trim();
+      if (!text) return "";
+      const m = text.match(/[A-Za-z0-9]/);
+      if (m) return m[0].toUpperCase();
+      const fallback = String(fallbackName || "").trim();
+      const f = fallback.match(/[A-Za-z0-9]/);
+      return f ? f[0].toUpperCase() : "";
+    }
+
+    function setPlayerColorsInputs(raw) {
+      const c = normalizePlayerColors(raw);
+      $("alliesColor").value = c.allies;
+      $("axisColor").value = c.axis;
+    }
+
+    function getPlayerColorsFromInputs() {
+      return normalizePlayerColors({
+        allies: $("alliesColor").value,
+        axis: $("axisColor").value,
+      });
+    }
+
+    function formatRemainingTime(seconds) {
+      const n = Number(seconds);
+      if (!Number.isFinite(n) || n < 0) return "n/a";
+      const total = Math.max(0, Math.floor(n));
+      const hh = Math.floor(total / 3600);
+      const mm = Math.floor((total % 3600) / 60);
+      const ss = total % 60;
+      if (hh > 0) {
+        return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+      }
+      return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+    }
+
+    function formatReplayTime(frame) {
+      const ts = Number(frame?.ts_unix);
+      if (Number.isFinite(ts)) {
+        return new Date(ts * 1000).toLocaleTimeString();
+      }
+      if (frame?.ts_iso) {
+        const d = new Date(frame.ts_iso);
+        if (!Number.isNaN(d.getTime())) return d.toLocaleTimeString();
+      }
+      return "n/a";
+    }
+
+    function formatReplayElapsed(frame, replayStartUnix) {
+      const t1 = Number(frame?.ts_unix);
+      const t0 = Number(replayStartUnix);
+      if (Number.isFinite(t0) && Number.isFinite(t1) && t1 >= t0) {
+        return formatRemainingTime(t1 - t0);
+      }
+      return "00:00";
+    }
+
+    function projectWorld(rawPos, frame) {
+      if (!rawPos || typeof rawPos.x !== "number" || typeof rawPos.y !== "number") return null;
+      if (rawPos.x === 0 && rawPos.y === 0) return null;
+      const pv = normalizePlayerView(frame?.player_view || null);
+      let x = rawPos.x;
+      let y = rawPos.y;
+      if (pv.mirror_x) x = -x;
+      if (pv.mirror_y) y = -y;
+      return { x, y };
+    }
+
+    function isLikelyValidCalibrationPoint(pos) {
+      if (!pos || typeof pos.x !== "number" || typeof pos.y !== "number") return false;
+      if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return false;
+      if (pos.x === 0 && pos.y === 0) return false;
+      const maxAbs = 300000;
+      if (Math.abs(pos.x) > maxAbs || Math.abs(pos.y) > maxAbs) return false;
+      return true;
+    }
+
+    function collectCalibrationPoints(frame) {
+      return (frame?.players || [])
+        .map((p) => p?.world_position)
+        .filter(isLikelyValidCalibrationPoint)
+        .map((p) => ({ x: p.x, y: p.y }));
+    }
+
+    function rgbToHsl(r, g, b) {
+      const rn = r / 255;
+      const gn = g / 255;
+      const bn = b / 255;
+      const max = Math.max(rn, gn, bn);
+      const min = Math.min(rn, gn, bn);
+      const l = (max + min) / 2;
+      if (max === min) return { h: 0, s: 0, l };
+      const d = max - min;
+      const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      return { h: 0, s, l };
+    }
+
+    function detectPlayableRectFromImage(img) {
+      try {
+        if (!img || !img.width || !img.height) return null;
+        const maxSide = 512;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.max(32, Math.floor(img.width * scale));
+        const h = Math.max(32, Math.floor(img.height * scale));
+        const cv = document.createElement("canvas");
+        cv.width = w;
+        cv.height = h;
+        const ctx = cv.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0, 0, w, h).data;
+
+        let minX = w, maxX = -1, minY = h, maxY = -1;
+        let active = 0;
+        for (let y = 0; y < h; y += 2) {
+          for (let x = 0; x < w; x += 2) {
+            const i = (y * w + x) * 4;
+            const a = data[i + 3];
+            if (a < 8) continue;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const { s, l } = rgbToHsl(r, g, b);
+            // Playable terrain tends to have more color variation than gray border regions.
+            const isPlayable = (s > 0.08 && l > 0.08 && l < 0.95) || (l > 0.18 && l < 0.75 && s > 0.04);
+            if (!isPlayable) continue;
+            active++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+
+        if (active < 120 || maxX <= minX || maxY <= minY) return null;
+        const rx = minX / w;
+        const ry = minY / h;
+        const rw = (maxX - minX) / w;
+        const rh = (maxY - minY) / h;
+        // Basic sanity clamp.
+        if (rw < 0.35 || rh < 0.35 || rw > 0.98 || rh > 0.98) return null;
+        return { x: rx, y: ry, w: rw, h: rh };
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function getMapPlayableRectPreset(frame) {
+      const preset = getPlayableGridPresetForFrame(frame);
+      return playableRectFromGridPreset(preset);
+    }
+
+    function playableRectFromGridPreset(preset) {
+      if (!preset || typeof preset !== "object") return null;
+      const cs = Number(preset.col_start);
+      const ce = Number(preset.col_end);
+      const rs = Number(preset.row_start);
+      const re = Number(preset.row_end);
+      if (![cs, ce, rs, re].every(Number.isFinite)) return null;
+      if (cs < 1 || ce > 10 || rs < 1 || re > 10) return null;
+      if (ce < cs || re < rs) return null;
+      const x = (cs - 1) / 10;
+      const y = (rs - 1) / 10;
+      const w = (ce - cs + 1) / 10;
+      const h = (re - rs + 1) / 10;
+      return { x, y, w, h };
+    }
+
+    function getPlayableGridPresetForFrame(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      for (const slug of slugs) {
+        const preset = HLL_MAP_PLAYABLE_GRID_PRESETS[slug];
+        if (preset) return preset;
+      }
+      for (const slug of slugs) {
+        if (HLL_MAP_HORIZONTAL_SLUGS.has(slug)) {
+          // Rows C..H playable, all columns playable.
+          return { col_start: 1, col_end: 10, row_start: 3, row_end: 8 };
+        }
+        if (HLL_MAP_VERTICAL_SLUGS.has(slug)) {
+          // Columns 3..8 playable, all rows playable.
+          return { col_start: 3, col_end: 8, row_start: 1, row_end: 10 };
+        }
+      }
+      return null;
+    }
+
+    function getPlayableWorldBoundsPresetForFrame(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      for (const slug of slugs) {
+        const direct = HLL_MAP_PLAYABLE_WORLD_BOUNDS_PRESETS[slug];
+        if (direct) return { ...direct };
+      }
+      for (const slug of slugs) {
+        if (HLL_MAP_HORIZONTAL_SLUGS.has(slug)) {
+          return { ...HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.horizontal };
+        }
+        if (HLL_MAP_VERTICAL_SLUGS.has(slug)) {
+          return { ...HLL_ORIENTATION_PLAYABLE_WORLD_BOUNDS.vertical };
+        }
+      }
+      return null;
+    }
+
+    function defaultHllPlayableRect() {
+      const inset = HLL_PLAYABLE_BORDER_RATIO;
+      const size = Math.max(0.05, 1 - inset * 2);
+      return { x: inset, y: inset, w: size, h: size };
+    }
+
+    function worldBoundsFromPlayableRect(rect) {
+      if (!rect || typeof rect !== "object") return null;
+      const x = Number(rect.x);
+      const y = Number(rect.y);
+      const w = Number(rect.w);
+      const h = Number(rect.h);
+      if (![x, y, w, h].every(Number.isFinite)) return null;
+      if (w <= 0 || h <= 0) return null;
+      const xMin = HLL_WORLD_MIN + (x * HLL_WORLD_SIZE);
+      const xMax = HLL_WORLD_MIN + ((x + w) * HLL_WORLD_SIZE);
+      const yMin = HLL_WORLD_MIN + (y * HLL_WORLD_SIZE);
+      const yMax = HLL_WORLD_MIN + ((y + h) * HLL_WORLD_SIZE);
+      if (![xMin, xMax, yMin, yMax].every(Number.isFinite)) return null;
+      if (xMax <= xMin || yMax <= yMin) return null;
+      return { xMin, xMax, yMin, yMax };
+    }
+
+    function estimateStripPlayableRectFromPoints(frame) {
+      const points = collectCalibrationPoints(frame);
+      if (!points || points.length < 24) return null;
+      const xs = points.map(p => p.x).sort((a, b) => a - b);
+      const ys = points.map(p => p.y).sort((a, b) => a - b);
+      const xLo = quantile(xs, 0.1);
+      const xHi = quantile(xs, 0.9);
+      const yLo = quantile(ys, 0.1);
+      const yHi = quantile(ys, 0.9);
+      if (![xLo, xHi, yLo, yHi].every(Number.isFinite)) return null;
+      if (xHi <= xLo || yHi <= yLo) return null;
+
+      const xRange = xHi - xLo;
+      const yRange = yHi - yLo;
+      const stripSize = (HLL_GRID_CELLS - HLL_STRIP_INSET_CELLS * 2) / HLL_GRID_CELLS; // 0.6
+      const stripInset = HLL_STRIP_INSET_CELLS / HLL_GRID_CELLS; // 0.2
+
+      // If players span much wider than tall, we assume top/bottom border bars.
+      if (xRange > yRange * 1.25) {
+        return { rect: { x: 0, y: stripInset, w: 1, h: stripSize }, source: "points-strip-h" };
+      }
+      // If players span much taller than wide, we assume left/right border bars.
+      if (yRange > xRange * 1.25) {
+        return { rect: { x: stripInset, y: 0, w: stripSize, h: 1 }, source: "points-strip-v" };
+      }
+      return null;
+    }
+
+    function quantile(sorted, q) {
+      if (!sorted.length) return null;
+      if (sorted.length === 1) return sorted[0];
+      const pos = (sorted.length - 1) * q;
+      const lo = Math.floor(pos);
+      const hi = Math.ceil(pos);
+      if (lo === hi) return sorted[lo];
+      const t = pos - lo;
+      return sorted[lo] * (1 - t) + sorted[hi] * t;
+    }
+
+    function dedupe(values) {
+      return [...new Set(values.filter(Boolean))];
+    }
+
+    function normalizeMapSlug(raw) {
+      return String(raw || "")
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function trimLayerWordsFromSlug(slug) {
+      const parts = normalizeMapSlug(slug).split("_").filter(Boolean);
+      while (parts.length > 1 && MAP_LAYER_WORDS.has(parts[parts.length - 1])) {
+        parts.pop();
+      }
+      return parts.join("_");
+    }
+
+    function withNoUnderscoreVariant(slug) {
+      const norm = normalizeMapSlug(slug);
+      if (!norm) return [];
+      const plain = norm.replace(/_/g, "");
+      if (!plain || plain === norm) return [norm];
+      return [norm, plain];
+    }
+
+    function expandAliasSlugs(slugs) {
+      const out = [];
+      for (const raw of slugs || []) {
+        for (const variant of withNoUnderscoreVariant(raw)) {
+          out.push(variant);
+          const alias = MAP_SLUG_ALIASES[variant];
+          if (alias) out.push(alias);
+        }
+      }
+      return dedupe(out);
+    }
+
+    function getMapSlugCandidates(frame) {
+      const byImage = normalizeMapSlug(frame.map_image_name);
+      const byShort = normalizeMapSlug(frame.map_shortname);
+      const byName = normalizeMapSlug(frame.map_name);
+      const trimmedName = trimLayerWordsFromSlug(frame.map_name);
+      return expandAliasSlugs([byImage, byShort, trimmedName, byName]);
+    }
+
+    async function fetchMapVisualIndex() {
+      try {
+        const j = await api("/api/map_visuals");
+        const files = Array.isArray(j.files) ? j.files : [];
+        const map = {};
+        const extRank = { webp: 0, png: 1, jpg: 2, jpeg: 3 };
+        const getExt = (url) => {
+          const s = String(url || "").toLowerCase();
+          const q = s.indexOf("?");
+          const clean = q >= 0 ? s.slice(0, q) : s;
+          const dot = clean.lastIndexOf(".");
+          return dot >= 0 ? clean.slice(dot + 1) : "";
+        };
+        for (const item of files) {
+          if (!item || typeof item !== "object") continue;
+          const url = String(item.url || "").trim();
+          const stem = normalizeMapSlug(item.stem);
+          if (!url || !stem) continue;
+          if (!map[stem]) map[stem] = [];
+          map[stem].push(url);
+        }
+        for (const stem of Object.keys(map)) {
+          map[stem].sort((a, b) => {
+            const ra = extRank[getExt(a)];
+            const rb = extRank[getExt(b)];
+            const pa = Number.isFinite(ra) ? ra : 99;
+            const pb = Number.isFinite(rb) ? rb : 99;
+            if (pa !== pb) return pa - pb;
+            return String(a).localeCompare(String(b));
+          });
+        }
+        state.mapVisualIndex = map;
+      } catch (_) {
+        state.mapVisualIndex = {};
+      }
+    }
+
+    function getMapVisualPathCandidates(frame) {
+      const slugs = getMapSlugCandidates(frame);
+      const out = [];
+      for (const slug of slugs) {
+        const indexed = state.mapVisualIndex?.[slug] || [];
+        for (const path of indexed) out.push(path);
+        for (const ext of MAP_VISUAL_EXTENSIONS) {
+          out.push(`/maps/${slug}.${ext}`);
+        }
+      }
+      return dedupe(out);
+    }
+
+    function getMapVisualStatus() {
+      const status = state.mapVisual.status;
+      if (status === "ready" && state.mapVisual.src) {
+        const pr = state.mapVisual.playableRectSource || "none";
+        return `visual:${state.mapVisual.src} playable:${pr}`;
+      }
+      if (status === "loading") return "visual:loading";
+      if (status === "missing") return "visual:missing";
+      return "visual:off";
+    }
+
+    function resolveMapVisual(frame) {
+      if (!frame || typeof frame !== "object") return;
+      const key = [
+        normalizeMapSlug(frame.map_image_name),
+        normalizeMapSlug(frame.map_shortname),
+        normalizeMapSlug(frame.map_name),
+      ].join("|");
+      if (state.mapVisual.key === key) return;
+
+      const candidates = getMapVisualPathCandidates(frame);
+      state.mapVisual = {
+        key,
+        status: candidates.length ? "loading" : "missing",
+        img: null,
+        src: "",
+        playableRect: null,
+        playableRectSource: "none",
+      };
+      if (!candidates.length) return;
+
+      const expectedKey = key;
+      const tryLoad = (index) => {
+        if (state.mapVisual.key !== expectedKey) return;
+        if (index >= candidates.length) {
+          state.mapVisual = { ...state.mapVisual, status: "missing", img: null, src: "" };
+          if (state.frame) drawFrame(state.frame);
+          return;
+        }
+
+        const src = candidates[index];
+        const cached = state.mapVisualCache[src];
+        if (cached && cached.ok && cached.img) {
+          state.mapVisual = { ...state.mapVisual, status: "ready", img: cached.img, src };
+          if (!state.mapVisual.playableRect) {
+            const presetPlayable = getMapPlayableRectPreset(frame);
+            if (presetPlayable) {
+              state.mapVisual.playableRect = presetPlayable;
+              state.mapVisual.playableRectSource = "preset";
+            } else {
+              const stripPlayable = estimateStripPlayableRectFromPoints(frame);
+              if (stripPlayable?.rect) {
+                state.mapVisual.playableRect = stripPlayable.rect;
+                state.mapVisual.playableRectSource = stripPlayable.source || "points-strip";
+              } else {
+                state.mapVisual.playableRect = detectPlayableRectFromImage(cached.img) || defaultHllPlayableRect();
+                state.mapVisual.playableRectSource = state.mapVisual.playableRect ? "image" : "hll-default";
+              }
+            }
+          }
+          if (state.frame) drawFrame(state.frame);
+          return;
+        }
+        if (cached && cached.ok === false) {
+          tryLoad(index + 1);
+          return;
+        }
+
+        const img = new Image();
+        img.onload = () => {
+          state.mapVisualCache[src] = { ok: true, img };
+          if (state.mapVisual.key !== expectedKey) return;
+          const presetPlayable = getMapPlayableRectPreset(frame);
+          const stripPlayable = presetPlayable ? null : estimateStripPlayableRectFromPoints(frame);
+          const detectedPlayable =
+            presetPlayable ||
+            stripPlayable?.rect ||
+            detectPlayableRectFromImage(img) ||
+            defaultHllPlayableRect();
+          state.mapVisual = {
+            ...state.mapVisual,
+            status: "ready",
+            img,
+            src,
+            playableRect: detectedPlayable,
+            playableRectSource: presetPlayable
+              ? "preset"
+              : (stripPlayable?.source || (detectedPlayable ? "image" : "hll-default")),
+          };
+          if (state.frame) drawFrame(state.frame);
+        };
+        img.onerror = () => {
+          state.mapVisualCache[src] = { ok: false, img: null };
+          if (state.mapVisual.key !== expectedKey) return;
+          tryLoad(index + 1);
+        };
+        img.src = src;
+      };
+
+      tryLoad(0);
+    }
+
+    function detectBounds(players, frame) {
       let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
       let n = 0;
       for (const p of players) {
         const w = p.world_position;
-        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
-        xMin = Math.min(xMin, w.x); xMax = Math.max(xMax, w.x);
-        yMin = Math.min(yMin, w.y); yMax = Math.max(yMax, w.y);
+        const wp = projectWorld(w, frame);
+        if (!wp) continue;
+        xMin = Math.min(xMin, wp.x); xMax = Math.max(xMax, wp.x);
+        yMin = Math.min(yMin, wp.y); yMax = Math.max(yMax, wp.y);
         n++;
       }
       if (n < 2) return null;
@@ -267,16 +2123,156 @@
       return { xMin: xMin - xp, xMax: xMax + xp, yMin: yMin - yp, yMax: yMax + yp };
     }
 
+    function outOfBoundsRatio(bounds, players, frame) {
+      if (!bounds) return 1;
+      let valid = 0;
+      let out = 0;
+      for (const p of players || []) {
+        const w = p.world_position;
+        const wp = projectWorld(w, frame);
+        if (!wp) continue;
+        valid++;
+        if (wp.x < bounds.xMin || wp.x > bounds.xMax || wp.y < bounds.yMin || wp.y > bounds.yMax) {
+          out++;
+        }
+      }
+      if (!valid) return 1;
+      return out / valid;
+    }
+
+    function mergeBounds(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+      return {
+        xMin: Math.min(a.xMin, b.xMin),
+        xMax: Math.max(a.xMax, b.xMax),
+        yMin: Math.min(a.yMin, b.yMin),
+        yMax: Math.max(a.yMax, b.yMax),
+      };
+    }
+
+    function getRenderBounds(frame, players) {
+      const playableWorldPreset = getPlayableWorldBoundsPresetForFrame(frame);
+      if (playableWorldPreset) {
+        return { ...playableWorldPreset, source: "hll-playable-preset" };
+      }
+      return {
+        xMin: HLL_WORLD_MIN,
+        xMax: HLL_WORLD_MAX,
+        yMin: HLL_WORLD_MIN,
+        yMax: HLL_WORLD_MAX,
+        source: "hll-fixed",
+      };
+    }
+
+    function getMapViewport(canvas, bounds) {
+      const outerPad = 8;
+      const availW = Math.max(1, canvas.width - outerPad * 2);
+      const availH = Math.max(1, canvas.height - outerPad * 2);
+      const imageAspect = state.mapVisual?.img ? (state.mapVisual.img.width / state.mapVisual.img.height) : 0;
+      const boundsAspect = bounds ? ((bounds.xMax - bounds.xMin) / Math.max(1e-9, bounds.yMax - bounds.yMin)) : 0;
+      const targetAspect = Number.isFinite(imageAspect) && imageAspect > 0
+        ? imageAspect
+        : (Number.isFinite(boundsAspect) && boundsAspect > 0 ? boundsAspect : (availW / availH));
+
+      let w = availW;
+      let h = w / targetAspect;
+      if (h > availH) {
+        h = availH;
+        w = h * targetAspect;
+      }
+      const x = (canvas.width - w) / 2;
+      const y = (canvas.height - h) / 2;
+      return { x, y, w, h };
+    }
+
+    function getPlayableViewport(imageViewport) {
+      const r = state.mapVisual?.playableRect || defaultHllPlayableRect();
+      return {
+        x: imageViewport.x + (r.x * imageViewport.w),
+        y: imageViewport.y + (r.y * imageViewport.h),
+        w: imageViewport.w * r.w,
+        h: imageViewport.h * r.h,
+      };
+    }
+
     function project(v, min, max, size) {
       if (max === min) return size / 2;
       return ((v - min) / (max - min)) * size;
     }
 
+    function getZoomState() {
+      const z = state.zoom || { scale: 1, centerXNorm: 0.5, centerYNorm: 0.5 };
+      const scale = Number.isFinite(z.scale) ? z.scale : 1;
+      const centerXNorm = Number.isFinite(z.centerXNorm) ? z.centerXNorm : 0.5;
+      const centerYNorm = Number.isFinite(z.centerYNorm) ? z.centerYNorm : 0.5;
+      return {
+        scale: Math.max(1, Math.min(3, scale)),
+        centerXNorm: Math.max(0, Math.min(1, centerXNorm)),
+        centerYNorm: Math.max(0, Math.min(1, centerYNorm)),
+      };
+    }
+
+    function setZoomState(next) {
+      const z = getZoomState();
+      const merged = {
+        scale: Number.isFinite(next?.scale) ? next.scale : z.scale,
+        centerXNorm: Number.isFinite(next?.centerXNorm) ? next.centerXNorm : z.centerXNorm,
+        centerYNorm: Number.isFinite(next?.centerYNorm) ? next.centerYNorm : z.centerYNorm,
+      };
+      state.zoom = {
+        scale: Math.max(1, Math.min(3, merged.scale)),
+        centerXNorm: Math.max(0, Math.min(1, merged.centerXNorm)),
+        centerYNorm: Math.max(0, Math.min(1, merged.centerYNorm)),
+      };
+    }
+
+    function applyZoomToViewport(vp) {
+      const z = getZoomState();
+      if (!vp || z.scale <= 1.0001) return vp;
+      const newW = vp.w / z.scale;
+      const newH = vp.h / z.scale;
+      let x = vp.x + (z.centerXNorm * vp.w) - (newW / 2);
+      let y = vp.y + (z.centerYNorm * vp.h) - (newH / 2);
+      const minX = vp.x;
+      const maxX = vp.x + vp.w - newW;
+      const minY = vp.y;
+      const maxY = vp.y + vp.h - newH;
+      x = Math.max(minX, Math.min(maxX, x));
+      y = Math.max(minY, Math.min(maxY, y));
+      return { x, y, w: newW, h: newH };
+    }
+
+
     function drawFrame(frame) {
       state.frame = frame;
       $("mapName").textContent = frame.map_name || "UNKNOWN MAP";
-      const ts = frame.ts_iso ? new Date(frame.ts_iso).toLocaleTimeString() : "n/a";
-      $("frameInfo").textContent = `${(frame.players || []).length} players · ${ts}`;
+      const ts = formatReplayTime(frame);
+      const replayElapsed = formatReplayElapsed(frame, state.replayStartUnix);
+      const allPlayers = frame.players || [];
+      const filterState = getPlayerFilterState();
+      const players = getDisplayedPlayers(frame, filterState);
+      const bounds = getRenderBounds(frame, allPlayers);
+      const boundsSrc = bounds ? (bounds.source || "auto") : "none";
+      const mapView = normalizeMapView(frame.map_view || null);
+      const playerView = normalizePlayerView(frame.player_view || null);
+      const playerColors = normalizePlayerColors(frame.player_colors || null);
+      const zoom = getZoomState();
+      const projFlags = [];
+      if (playerView.mirror_x) projFlags.push("mirrorX");
+      if (playerView.mirror_y) projFlags.push("mirrorY");
+      const mapViewFlags = [];
+      if (mapView.flip_x) mapViewFlags.push("mapFlipX");
+      if (mapView.flip_y) mapViewFlags.push("mapFlipY");
+      const projInfo = `players:${projFlags.join("+") || "none"} view:${mapViewFlags.join("+") || "none"} zoom:${zoom.scale.toFixed(2)}x`;
+      $("frameInfo").textContent = `${players.length}/${allPlayers.length} shown · ${ts} · bounds:${boundsSrc} · ${getMapVisualStatus()} · ${projInfo}`;
+      const alliedScore = Number.isFinite(Number(frame.allies_score)) ? Number(frame.allies_score) : null;
+      const axisScore = Number.isFinite(Number(frame.axis_score)) ? Number(frame.axis_score) : null;
+      const scoreTxt = (alliedScore !== null || axisScore !== null)
+        ? `${alliedScore ?? "?"} - ${axisScore ?? "?"}`
+        : "n/a";
+      const timeTxt = formatRemainingTime(frame.time_remaining_sec);
+      $("scoreInfo").textContent = `Score ${scoreTxt} · Remaining ${timeTxt} · Replay ${replayElapsed} (${ts})`;
 
       const canvas = $("mapCanvas");
       const rect = canvas.getBoundingClientRect();
@@ -284,39 +2280,107 @@
       canvas.height = Math.max(400, Math.floor(rect.height));
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const viewport = getMapViewport(canvas, bounds);
+      const playableViewport = getPlayableViewport(viewport);
+      const mapCenterX = viewport.x + (viewport.w * zoom.centerXNorm);
+      const mapCenterY = viewport.y + (viewport.h * zoom.centerYNorm);
+      const zoomScale = zoom.scale;
+      state.lastDrawMeta = { bounds, playableViewport, mapCenterX, mapCenterY, zoomScale };
 
-      // grid
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      for (let x = 0; x < canvas.width; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-      for (let y = 0; y < canvas.height; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+      if (state.mapVisual.status === "ready" && state.mapVisual.img) {
+        ctx.save();
+        if (zoomScale > 1.0001) {
+          // >1 means zoom in (magnify map around chosen center).
+          ctx.translate(mapCenterX, mapCenterY);
+          ctx.scale(zoomScale, zoomScale);
+          ctx.translate(-mapCenterX, -mapCenterY);
+        }
+        if (mapView.flip_x || mapView.flip_y) {
+          if (mapView.flip_x) {
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+          }
+          if (mapView.flip_y) {
+            ctx.translate(0, canvas.height);
+            ctx.scale(1, -1);
+          }
+        }
+        ctx.globalAlpha = 0.55;
+        ctx.drawImage(state.mapVisual.img, viewport.x, viewport.y, viewport.w, viewport.h);
+        ctx.restore();
+      }
 
-      const players = frame.players || [];
-      const bounds = detectBounds(players);
       state.projected = [];
       if (!bounds) {
         ctx.fillStyle = "rgba(255,255,255,0.5)";
         ctx.font = "14px Arial";
-        ctx.fillText("No world_position data in this frame.", 16, 24);
+        ctx.fillText("No usable world_position/map bounds in this frame.", 16, 24);
         return;
       }
 
+      drawHeatmapOverlay(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale, filterState);
+
+      // grid
+      ctx.strokeStyle = "rgba(255,255,255,0.07)";
+      for (let x = playableViewport.x; x <= playableViewport.x + playableViewport.w; x += 64) {
+        ctx.beginPath(); ctx.moveTo(x, playableViewport.y); ctx.lineTo(x, playableViewport.y + playableViewport.h); ctx.stroke();
+      }
+      for (let y = playableViewport.y; y <= playableViewport.y + playableViewport.h; y += 64) {
+        ctx.beginPath(); ctx.moveTo(playableViewport.x, y); ctx.lineTo(playableViewport.x + playableViewport.w, y); ctx.stroke();
+      }
+
+      drawBreadcrumbTrail(ctx, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+
       for (const p of players) {
-        const w = p.world_position;
-        if (!w || typeof w.x !== "number" || typeof w.y !== "number") continue;
-        const x = project(w.x, bounds.xMin, bounds.xMax, canvas.width);
-        const y = project(w.y, bounds.yMin, bounds.yMax, canvas.height);
+        const s = worldToScreen(p.world_position, frame, bounds, playableViewport, mapCenterX, mapCenterY, zoomScale);
+        if (!s) continue;
+        const x = s.x;
+        const y = s.y;
         const axis = String(p.team || "").toLowerCase().includes("axis");
-        const color = axis ? "#ff5f5f" : "#58a6ff";
+        const color = axis ? playerColors.axis : playerColors.allies;
+        const isTank = Boolean(p.is_tank_role) || isTankRole(p.role);
+        const isCommander = isCommanderRole(p.role, p.squad);
         ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.arc(x, y, isTank ? 6.5 : 5, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
+        if (isTank) {
+          ctx.beginPath();
+          ctx.arc(x, y, 9, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 215, 0, 0.85)";
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+        }
+        if (selectedPlayerMatches(p)) {
+          ctx.beginPath();
+          ctx.arc(x, y, isTank ? 11.2 : 8.4, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+        if (isCommander) {
+          drawCommanderTriangleDots(ctx, x, y);
+        } else if (p.is_squad_leader) {
+          const initial = getSquadInitial(p.squad, p.name);
+          if (initial) {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.95)";
+            ctx.font = "bold 11px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(initial, x, y);
+          }
+        }
         state.projected.push({ x, y, p });
       }
     }
 
     function renderRoster(frame) {
-      const players = [...(frame.players || [])].sort((a, b) => (Number(b.kills || 0) - Number(a.kills || 0)));
+      const players = [...getDisplayedPlayers(frame, getPlayerFilterState())]
+        .sort((a, b) => (Number(b.kills || 0) - Number(a.kills || 0)));
+      if (!players.length) {
+        $("roster").innerHTML = `<div class="tag">No players match current filters.</div>`;
+        return;
+      }
       $("roster").innerHTML = players.map(p => {
         const teamClass = String(p.team || "").toLowerCase().includes("axis") ? "team-axis" : "team-allies";
         return `<div class="roster-item">
@@ -329,8 +2393,14 @@
     function applyFrame(frame, prevOverride = null) {
       const prev = prevOverride !== null ? prevOverride : state.lastFrame;
       addEvents(diffEvents(prev, frame));
+      if (state.mode === "live") updateLiveHistory(frame);
+      updateFilterOptions(frame);
+      refreshFilterPresetSelect($("filterPresetSelect")?.value || "");
+      resolveMapVisual(frame);
       drawFrame(frame);
       renderRoster(frame);
+      renderVehicleSummary(frame);
+      renderReplayTimeline();
       state.lastFrame = frame;
     }
 
@@ -380,12 +2450,17 @@
       if (!id) return;
       const j = await api(`/api/replay?id=${encodeURIComponent(id)}`);
       state.replayFrames = j.frames || [];
+      state.replayStartUnix = Number(state.replayFrames[0]?.ts_unix);
+      if (!Number.isFinite(state.replayStartUnix)) state.replayStartUnix = null;
+      state.replayStartIso = state.replayFrames[0]?.ts_iso || "";
       state.replayIndex = 0;
       $("timeline").max = Math.max(0, state.replayFrames.length - 1);
       $("timeline").value = 0;
       state.events = [];
-      if (state.replayFrames.length) applyFrame(state.replayFrames[0], null);
       setMode("replay");
+      state.replayTimelineEvents = buildReplayTimelineEvents(state.replayFrames);
+      if (state.replayFrames.length) applyFrame(state.replayFrames[0], null);
+      else renderReplayTimeline();
       setStatus(`Replay loaded: ${id}`);
     }
 
@@ -423,27 +2498,112 @@
         const rect = canvas.getBoundingClientRect();
         const mx = ev.clientX - rect.left;
         const my = ev.clientY - rect.top;
-        let best = null;
-        let bestDist = 9999;
-        for (const node of state.projected) {
-          const dx = node.x - mx;
-          const dy = node.y - my;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < bestDist) { bestDist = d; best = node; }
-        }
-        if (!best || bestDist > 12) {
+        const best = findNearestProjectedPlayer(mx, my, 12);
+        if (!best) {
           $("hoverName").textContent = "Hover a player dot";
           $("hoverMeta").textContent = "Role / Team / Squad / K:D";
           return;
         }
         const p = best.p;
         $("hoverName").textContent = p.name || "Unknown";
-        $("hoverMeta").textContent = `${p.role || "role?"} · ${p.team || "team?"} · ${p.squad || "squad?"} · K:${p.kills || 0} D:${p.deaths || 0}`;
+        const tags = [];
+        if (p.is_squad_leader) tags.push("SL");
+        if (p.is_tank_role || isTankRole(p.role)) tags.push("TANK");
+        const tagTxt = tags.length ? ` · ${tags.join("/")}` : "";
+        $("hoverMeta").textContent = `${p.role || "role?"} · ${p.team || "team?"} · ${p.squad || "squad?"}${tagTxt} · K:${p.kills || 0} D:${p.deaths || 0}`;
       });
     }
 
+    function bindCanvasZoom() {
+      const canvas = $("mapCanvas");
+      canvas.addEventListener("wheel", (ev) => {
+        ev.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mx = ev.clientX - rect.left;
+        const my = ev.clientY - rect.top;
+        const xNorm = rect.width > 0 ? (mx / rect.width) : 0.5;
+        const yNorm = rect.height > 0 ? (my / rect.height) : 0.5;
+        const z = getZoomState();
+        const factor = ev.deltaY < 0 ? 1.12 : (1 / 1.12);
+        const nextScale = Math.max(1, Math.min(3, z.scale * factor));
+        setZoomState({ scale: nextScale, centerXNorm: xNorm, centerYNorm: yNorm });
+        if (state.frame) drawFrame(state.frame);
+      }, { passive: false });
+
+      canvas.addEventListener("dblclick", () => {
+        setZoomState({ scale: 1, centerXNorm: 0.5, centerYNorm: 0.5 });
+        if (state.frame) drawFrame(state.frame);
+      });
+    }
+
+    async function initBrandLogo() {
+      const img = $("brandLogo");
+      const fallback = $("brandLogoFallback");
+      if (!img) return;
+      const setVisible = (ok) => {
+        img.style.display = ok ? "block" : "none";
+        if (fallback) fallback.style.display = ok ? "none" : "inline-block";
+      };
+      setVisible(false);
+      const stamp = String(Date.now());
+      const candidates = [
+        "/maps/pathfinders_logo.png",
+        "/maps/pathfinders_logo.webp",
+        "/maps/pathfinders_logo.jpg",
+        "/maps/pathfinders_logo.jpeg",
+        "/maps/pathfinders-logo.png",
+        "/maps/pathfinders-logo.webp",
+        "/maps/Pathfinders_logo.png",
+        "/maps/PATHFINDERS.png",
+        "/pathfinders_logo.png",
+        "/pathfinders_logo.webp",
+        "./maps/pathfinders_logo.png",
+        "./maps/pathfinders_logo.webp",
+        "./maps/pathfinders_logo.jpg",
+        "./maps/pathfinders_logo.jpeg",
+        "./maps/Pathfinders_logo.png",
+        "./maps/pathfinders-logo.png",
+        "./maps/PATHFINDERS.png",
+      ];
+      try {
+        const j = await api("/api/map_visuals");
+        const files = Array.isArray(j?.files) ? j.files : [];
+        for (const file of files) {
+          const url = String(file?.url || "").trim();
+          const stem = String(file?.stem || "").trim().toLowerCase();
+          if (!url) continue;
+          if (stem.includes("pathfinder")) candidates.push(url);
+        }
+      } catch (_) {
+        // Best effort only; keep static candidate list.
+      }
+      const uniq = dedupe(candidates.map((p) => `${p}?v=${stamp}`));
+      let idx = 0;
+      img.onload = () => {
+        setVisible(true);
+      };
+      img.onerror = () => {
+        idx += 1;
+        if (idx >= uniq.length) {
+          img.onerror = null;
+          img.onload = null;
+          setVisible(false);
+          return;
+        }
+        img.src = uniq[idx];
+      };
+      img.src = uniq[idx];
+    }
+
+
     async function init() {
+      await initBrandLogo();
       bindCanvasHover();
+      bindCanvasSelection();
+      bindCanvasZoom();
+      bindFeatureControls();
+      updateSelectedPlayerLabel();
+      await fetchMapVisualIndex();
       $("saveCfgBtn").onclick = async () => { try { await saveConfig(); } catch (e) { setStatus(e.message); } };
       $("testLiveBtn").onclick = async () => { try { await pollLive(); setStatus("Live fetch OK."); } catch (e) { setStatus(e.message); } };
       $("startRecBtn").onclick = async () => {
@@ -463,11 +2623,28 @@
       $("liveModeBtn").onclick = () => setMode("live");
       $("replayModeBtn").onclick = () => setMode("replay");
       $("loadReplayBtn").onclick = async () => { try { await loadReplay(); } catch (e) { setStatus(e.message); } };
+      const exportBtn = $("exportAarBtn");
+      if (exportBtn) exportBtn.onclick = exportAutoAar;
       $("playBtn").onclick = playReplay;
       $("pauseBtn").onclick = pauseReplay;
       $("timeline").oninput = (e) => showReplayIndex(Number(e.target.value));
 
+      ["mirrorPlayersX", "mirrorPlayersY", "alliesColor", "axisColor", "flipMapX", "flipMapY"].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        el.addEventListener("change", () => {
+          if (!state.frame) return;
+          state.frame.player_view = getPlayerViewFromInputs();
+          state.frame.player_colors = getPlayerColorsFromInputs();
+          state.frame.map_view = getMapViewFromInputs();
+          refreshRenderedFrame();
+        });
+      });
+
+      connectFilterPresetControls();
       await loadConfig();
+      refreshFilterPresetSelect("");
+      renderVehicleSummary(null);
       await refreshReplays();
       setMode("live");
       pollLive();
