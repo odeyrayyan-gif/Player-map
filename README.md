@@ -35,12 +35,15 @@ python3 "download_maps.py"
 This restores the same high-quality base map pack used earlier into `maps/`
 with canonical filenames (for example: `carentan.webp`, `remagen.webp`,
 `sme.webp`, `smdm.webp`, `utah.webp`, `omaha.webp`).
+The downloader now validates each file (format, minimum size, checksum) and
+auto-repairs invalid/corrupted files.
 
 Optional flags:
 
 ```bash
 python3 "download_maps.py" --dry-run
 python3 "download_maps.py" --force
+python3 "download_maps.py" --no-verify
 ```
 
 ## Configure
