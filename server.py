@@ -228,6 +228,53 @@ def extract_map_meta(payload):
     }
 
 
+def extract_score_time_meta(payload):
+    result = payload.get("result", payload) if isinstance(payload, dict) else {}
+    if not isinstance(result, dict):
+        return {"allies_score": None, "axis_score": None, "time_remaining_sec": None}
+
+    sources = []
+    if isinstance(result.get("map"), dict):
+        sources.append(result["map"])
+    if isinstance(result.get("current_map"), dict):
+        sources.append(result["current_map"])
+    if isinstance(result.get("score"), dict):
+        sources.append(result["score"])
+    if isinstance(result.get("scores"), dict):
+        sources.append(result["scores"])
+    sources.append(result)
+
+    def get_num(keys):
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            for key in keys:
+                if key in src:
+                    value = to_float_or_none(src.get(key))
+                    if value is not None:
+                        return int(value)
+        return None
+
+    allies_score = get_num(("allies_score", "allied_score", "allies", "us_score", "friendly_score"))
+    axis_score = get_num(("axis_score", "enemy_score", "axis", "ger_score"))
+    time_remaining_sec = get_num(
+        (
+            "time_remaining",
+            "time_remaining_sec",
+            "remaining_time",
+            "remaining_seconds",
+            "seconds_remaining",
+            "time_left",
+            "match_time_remaining",
+        )
+    )
+    return {
+        "allies_score": allies_score,
+        "axis_score": axis_score,
+        "time_remaining_sec": time_remaining_sec,
+    }
+
+
 def to_float_or_none(value):
     try:
         out = float(value)
@@ -542,9 +589,13 @@ def build_frame(cfg):
         gs_candidates = dedupe_keep_order(gs_candidates)
 
     tv_meta = extract_map_meta(tv_data)
+    tv_score = extract_score_time_meta(tv_data)
     map_name = tv_meta["map_name"]
     map_shortname = tv_meta["map_shortname"]
     map_image_name = tv_meta["map_image_name"]
+    allies_score = tv_score["allies_score"]
+    axis_score = tv_score["axis_score"]
+    time_remaining_sec = tv_score["time_remaining_sec"]
     map_bounds = normalize_bounds(cfg.get("map_bounds")) or None
     map_bounds_source = "config" if map_bounds else "auto"
     projection = normalize_projection(cfg.get("projection"))
@@ -561,12 +612,19 @@ def build_frame(cfg):
     try:
         gs_data = fetch_first_ok_json(gs_candidates, cookie)
         gs_meta = extract_map_meta(gs_data)
+        gs_score = extract_score_time_meta(gs_data)
         if gs_meta["map_name"] != "UNKNOWN MAP":
             map_name = gs_meta["map_name"]
         if gs_meta["map_shortname"]:
             map_shortname = gs_meta["map_shortname"]
         if gs_meta["map_image_name"]:
             map_image_name = gs_meta["map_image_name"]
+        if gs_score["allies_score"] is not None:
+            allies_score = gs_score["allies_score"]
+        if gs_score["axis_score"] is not None:
+            axis_score = gs_score["axis_score"]
+        if gs_score["time_remaining_sec"] is not None:
+            time_remaining_sec = gs_score["time_remaining_sec"]
         if not map_bounds:
             gs_bounds = extract_map_bounds(gs_data)
             if gs_bounds:
@@ -584,6 +642,9 @@ def build_frame(cfg):
         "map_name": map_name,
         "map_shortname": map_shortname,
         "map_image_name": map_image_name,
+        "allies_score": allies_score,
+        "axis_score": axis_score,
+        "time_remaining_sec": time_remaining_sec,
         "map_bounds": map_bounds,
         "map_bounds_source": map_bounds_source,
         "projection": projection,
